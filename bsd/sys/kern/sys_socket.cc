@@ -57,14 +57,18 @@
 
 #include <mutex>
 
+#include <osv/ipbypass.h>
+
 using namespace std;
 
 extern "C" int linux_ioctl_socket(socket_file *fp, u_long cmd, void *data) ;
+int soi_ioctl(int fd, u_long cmd, void *data);
 
 socket_file::socket_file(unsigned flags, socket* _so)
     : file(flags, DTYPE_SOCKET, _so)
     , so(_so)
 {
+    mydebug("fd=?? so=%p so->fp=%p\n", so, so->fp);
     so->fp = this;
 }
 
@@ -147,6 +151,14 @@ static char get_ioctl_type(int ioctl)
 int
 socket_file::ioctl(u_long cmd, void *data)
 {
+    struct file* fp = so->fp;
+    int fd = fd_from_file(fp);
+    int ret = soi_ioctl(fd, cmd, data);
+    if(cmd == FIONBIO) {
+        char on = *(int*)data;
+        fprintf(stderr, "INFO fd=%d socket_file::ioctl(%d, %p=%d), FIONBIO=%d fp=%p, %d=soi_ioctl()\n", fd, cmd, data, on, FIONBIO, fp, ret);
+    }
+
     return linux_ioctl_socket(this, cmd, data);
 }
 
@@ -256,6 +268,7 @@ int
 socket_file::poll(int events)
 {
     SOCK_LOCK(so);
+    printf_early("DBG so=%p so_nc=%p\n", so, so->so_nc);
     if (so->so_nc) {
         so->so_nc->process_queue();
     }

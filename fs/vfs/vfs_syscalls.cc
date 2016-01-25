@@ -241,6 +241,15 @@ sys_close(struct file *fp)
 	return 0;
 }
 
+class sock_info;
+sock_info* sol_find(int fd);
+//sock_info* sol_find_peer(int fd, uint32_t peer_addr, ushort peer_port);
+ssize_t recvfrom_bypass(int fd, void *__restrict buf, size_t len);
+ssize_t sendto_bypass(int fd, const void *buf, size_t len, int flags,
+    const struct bsd_sockaddr *addr, socklen_t alen);
+void sendto_bypass_part2(int fd);
+bool fd_is_bypassed(int fd);
+
 int
 sys_read(struct file *fp, const struct iovec *iov, size_t niov,
 		off_t offset, size_t *count)
@@ -262,6 +271,44 @@ sys_read(struct file *fp, const struct iovec *iov, size_t niov,
         *count = 0;
         return 0;
     }
+
+    int fd = fd_from_file(fp);
+    if (fd_is_bypassed(fd)) {
+		/*
+		TODO:
+		if (soinf->flags & SOR_DELETED) {
+			errno = EBADF;
+			return -1;
+		}
+		if (soinf->flags & SOR_CLOSED) {
+			errno = ESHUTDOWN;
+			return -1;
+		}
+		*/
+        *count = 0;
+        int ret = 0;
+        size_t bytes = 0;
+        auto iovp = iov;
+        for (unsigned i = 0; i < niov; i++) {
+            bytes += iovp->iov_len;
+            ret = recvfrom_bypass(fd, iovp->iov_base, iovp->iov_len);
+            if (ret < 0) {
+                return errno;
+            }
+            if (ret == 0) {
+                return 0;
+            }
+            *count += ret;
+            assert((unsigned int)ret <= iovp->iov_len);
+            if ((unsigned int)ret < iovp->iov_len) {
+                return 0;
+            }
+            iovp++;
+        }
+        return 0;
+    }
+
+
 
     struct uio uio;
     // Unfortunately, the current implementation of fp->read zeros the
@@ -308,6 +355,46 @@ sys_write(struct file *fp, const struct iovec *iov, size_t niov,
     uio.uio_offset = offset;
     uio.uio_resid = bytes;
     uio.uio_rw = UIO_WRITE;
+
+    int fd = fd_from_file(fp);
+    if (fd_is_bypassed(fd)) {
+		/*
+		TODO:
+		if (soinf->flags & SOR_DELETED) {
+			errno = EBADF;
+			return -1;
+		}
+		if (soinf->flags & SOR_CLOSED) {
+			errno = ESHUTDOWN;
+			return -1;
+		}
+		*/
+        *count = 0;
+        int ret = 0;
+        size_t bytes = 0;
+        auto iovp = iov;
+        for (unsigned i = 0; i < niov; i++) {
+            bytes += iovp->iov_len;
+            ret = sendto_bypass(fd, iovp->iov_base, iovp->iov_len, 0, nullptr, 0);
+            if (ret < 0) {
+                return errno;
+            }
+            if (ret == 0) {
+                if (iovp->iov_len > 0) {
+                    return EINTR;
+                }
+                // else ret==0 is OK, 0-length iovec
+            }
+            *count += ret;
+            assert((unsigned int)ret <= iovp->iov_len);
+            if ((unsigned int)ret < iovp->iov_len) {
+                return 0;
+            }
+            iovp++;
+        }
+        return 0;
+    }
+
     auto error = fp->write(&uio, (offset == -1) ? 0 : FOF_OFFSET);
     *count = bytes - uio.uio_resid;
     return error;

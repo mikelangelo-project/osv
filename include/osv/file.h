@@ -133,10 +133,11 @@ struct hash<epoll_ptr> : private hash<epoll_file*>, private hash<epoll_key> {
 
 }
 
+#define FILE_WITH_FD 1
 /*
  * File structure
  */
-struct file {
+struct file { /**/
 	using clock = osv::clock::uptime;
 	using timeout_t = boost::optional<clock::time_point>;
 
@@ -185,6 +186,12 @@ struct file {
 	std::unique_ptr<std::vector<epoll_ptr>> f_epolls;
 	void stop_polls();
 	void wake_epoll(int possible_events = -1);
+
+#if FILE_WITH_FD
+	int fd_x1;
+	int fd;
+	int fd_y1;
+#endif
 };
 
 
@@ -246,6 +253,10 @@ void file_setoffset(struct file *fp, off_t off);
  */
 void fhold(struct file* fp);
 int fdrop(struct file* fp);
+
+// IP bypass code used fd as search key,
+// so we need to somehow get fd from struct file.
+int fd_from_file(struct file *fp);
 
 __END_DECLS
 

@@ -128,7 +128,9 @@
 
 #include <osv/zcopy.hh>
 
+#include <osv/debug.hh>
 #define uipc_d(...) tprintf_d("uipc_socket", __VA_ARGS__)
+#include <osv/ipbypass.h>
 
 static int	soreceive_rcvoob(struct socket *so, struct uio *uio,
 		    int flags);
@@ -250,6 +252,7 @@ soalloc(struct vnet *vnet)
 	so->so_gencnt = ++so_gencnt;
 	++numopensockets;
 	mtx_unlock(&so_global_mtx);
+	fprintf_pos(stderr, "created socket so=%p\n", so);
 	return (so);
 }
 
@@ -265,6 +268,7 @@ sodealloc(struct socket *so)
 	KASSERT(so->so_count == 0, ("sodealloc(): so_count %d", so->so_count));
 	KASSERT(so->so_pcb == NULL, ("sodealloc(): so_pcb != NULL"));
 
+	fprintf_pos(stderr, "deleted socket so=%p\n", so);
 	mtx_lock(&so_global_mtx);
 	so->so_gencnt = ++so_gencnt;
 	--numopensockets;	/* Could be below, but faster here. */
@@ -312,7 +316,7 @@ socreate(int dom, struct socket **aso, int type, int proto,
 
 	if (prp->pr_type != type)
 		return (EPROTOTYPE);
-	so = soalloc(CRED_TO_VNET(cred));
+	so = soalloc(CRED_TO_VNET(cred)); /**/
 	if (so == NULL)
 		return (ENOBUFS);
 
@@ -608,6 +612,8 @@ soclose(struct socket *so)
 	uipc_d("soclose() so=%" PRIx64, (uint64_t)so);
 	KASSERT(!(so->so_state & SS_NOFDREF), ("soclose: SS_NOFDREF on enter"));
 
+	return 0; // avoid all errors on ip-bypasssed socket during close
+
 	CURVNET_SET(so->so_vnet);
 	if (so->so_state & SS_ISCONNECTED) {
 		if ((so->so_state & SS_ISDISCONNECTING) == 0) {
@@ -746,6 +752,7 @@ soconnect(struct socket *so, struct bsd_sockaddr *nam, struct thread *td)
 		 * biting us.
 		 */
 		so->so_error = 0;
+		fprintf_pos(stderr, "so=%p so->so_proto->pr_usrreqs->pru_connect=%p\n", so, so->so_proto->pr_usrreqs->pru_connect);
 		error = (*so->so_proto->pr_usrreqs->pru_connect)(so, nam, td);
 	}
 	CURVNET_RESTORE();
@@ -788,6 +795,7 @@ sosend_dgram(struct socket *so, struct bsd_sockaddr *addr, struct uio *uio,
 	ssize_t resid;
 	int clen = 0, error, dontroute;
 
+	//fprintf_pos(stderr, " so=%p\n", so);
 	KASSERT(so->so_type == SOCK_DGRAM, ("sodgram_send: !SOCK_DGRAM"));
 	KASSERT(so->so_proto->pr_flags & PR_ATOMIC,
 	    ("sodgram_send: !PR_ATOMIC"));
@@ -900,6 +908,9 @@ sosend_dgram(struct socket *so, struct bsd_sockaddr *addr, struct uio *uio,
 	 * rethink this.
 	 */
 	VNET_SO_ASSERT(so);
+	// UDP sendto from udpsend.c (udpping.d) has (*so->so_proto->pr_usrreqs->pru_send) ==
+	// == udp_send() bsd/sys/netinet/udp_usrreq.cc, line 1515.
+	//fprintf_pos(stderr, " so=%p pru_send()=%p\n", so, *so->so_proto->pr_usrreqs->pru_send);
 	error = (*so->so_proto->pr_usrreqs->pru_send)(so,
 	    (flags & MSG_OOB) ? PRUS_OOB :
 	/*
@@ -1375,7 +1386,7 @@ sockbuf_pushsync(socket* so, struct sockbuf *sb, struct mbuf *nextrecord)
  * the count in uio_resid.
  */
 int
-soreceive_generic(struct socket *so, struct bsd_sockaddr **psa, struct uio *uio,
+soreceive_generic(struct socket *so, struct bsd_sockaddr **psa, struct uio *uio, /**/
     struct mbuf **mp0, struct mbuf **controlp, int *flagsp)
 {
 	struct mbuf *m, **mp;
@@ -2421,7 +2432,7 @@ soreceive_dgram(struct socket *so, struct bsd_sockaddr **psa, struct uio *uio,
 		}
 		SBLASTRECORDCHK(&so->so_rcv);
 		SBLASTMBUFCHK(&so->so_rcv);
-		error = sbwait(so, &so->so_rcv);
+		error = sbwait(so, &so->so_rcv); /**/
 		if (error) {
 			SOCK_UNLOCK(so);
 			return (error);
@@ -2536,7 +2547,7 @@ soreceive_dgram(struct socket *so, struct bsd_sockaddr **psa, struct uio *uio,
 }
 
 int
-soreceive(struct socket *so, struct bsd_sockaddr **psa, struct uio *uio,
+soreceive(struct socket *so, struct bsd_sockaddr **psa, struct uio *uio, /**/
     struct mbuf **mp0, struct mbuf **controlp, int *flagsp)
 {
 	int error;
@@ -3153,6 +3164,7 @@ sopoll(struct socket *so, int events, struct ucred *active_cred,
 	 * We do not need to set or assert curvnet as long as everyone uses
 	 * sopoll_generic().
 	 */
+    //fprintf_pos(stderr, "so=%p so->so_proto->pr_usrreqs->pru_sopoll=%p\n", so, so->so_proto->pr_usrreqs->pru_sopoll); // sopoll_generic
 	return (so->so_proto->pr_usrreqs->pru_sopoll(so, events, active_cred,
 	    td));
 }
@@ -3165,34 +3177,102 @@ sopoll_generic(struct socket *so, int events, struct ucred *active_cred,
 	return sopoll_generic_locked(so, events);
 }
 
+
+//size_t soi_data_len(int fd);
+bool soi_is_readable(int fd);
+bool soi_is_writable(int fd);
+bool fd_is_bypassed(int fd);
+
+//TIMED_TRACEPOINT(trace_sopoll_scan_all, "tid=%d nmod=%d", int, int)
+#define DOTR 0
+#if DOTR
+  TRACEPOINT(trace_sopoll_gl, "tid=%d events=0x%08x", int, int);
+  TRACEPOINT(trace_sopoll_gl_info, "tid=%d events=0x%08x LINE=%d", int, int, int);
+  TRACEPOINT(trace_sopoll_gl_ret, "tid=%d events=0x%08x revents=0x%08x", int, int, int);
+  TRACEPOINT(trace_sopoll_gl_err, "tid=%d events=0x%08x revents=0x%08x", int, int, int);
+#endif
+
 int
-sopoll_generic_locked(struct socket *so, int events)
+sopoll_generic_locked(struct socket *so, int events) /**/
 {
+#if DOTR
+	trace_sopoll_gl(gettid(), events);
+#endif
 	int revents = 0;
 
+	struct file* fp = so->fp;
+	int fd = fd_from_file(fp); /* TODO timed-trace */
+#if DOTR
+	trace_sopoll_gl_info(gettid(), events, __LINE__);
+#endif
+
 	if (events & (POLLIN | POLLRDNORM))
-		if (soreadabledata(so))
-			revents |= events & (POLLIN | POLLRDNORM);
+		if (fd_is_bypassed(fd)) {
+#if DOTR
+			trace_sopoll_gl_info(gettid(), events, __LINE__);
+#endif
+			if (soi_is_readable(fd)) {
+#if DOTR
+				trace_sopoll_gl_info(gettid(), events, __LINE__);
+#endif
+				revents |= events & (POLLIN | POLLRDNORM);
+			}
+		}
+		else {
+#if DOTR
+			trace_sopoll_gl_info(gettid(), events, __LINE__);
+#endif
+			if (soreadabledata(so)) {
+#if DOTR
+				trace_sopoll_gl_info(gettid(), events, __LINE__);
+#endif
+				revents |= events & (POLLIN | POLLRDNORM);
+				//fprintf_pos(stderr, "INFO: fd=%d is soreadabledata\n", fd);
+			}
+		}
 
-	if (events & (POLLOUT | POLLWRNORM))
-		if (sowriteable(so))
+	if (events & (POLLOUT | POLLWRNORM)) {
+#if DOTR
+		trace_sopoll_gl_info(gettid(), events, __LINE__);
+#endif
+		if (sowriteable(so)) {
+#if DOTR
+			trace_sopoll_gl_info(gettid(), events, __LINE__);
+#endif
 			revents |= events & (POLLOUT | POLLWRNORM);
+		}
+		if (soi_is_writable(fd)) {
+#if DOTR
+			trace_sopoll_gl_info(gettid(), events, __LINE__);
+#endif
+			revents |= events & (POLLOUT | POLLWRNORM);
+		}
+	}
 
+#if DOTR
+	trace_sopoll_gl_info(gettid(), events, __LINE__);
+#endif
 	if (events & (POLLPRI | POLLRDBAND))
 		if (so->so_oobmark || (so->so_rcv.sb_state & SBS_RCVATMARK))
 			revents |= events & (POLLPRI | POLLRDBAND);
 
+#if DOTR
+	trace_sopoll_gl_info(gettid(), events, __LINE__);
+#endif
 	if ((events & POLLINIGNEOF) == 0) {
-		if (so->so_rcv.sb_state & SBS_CANTRCVMORE) {
+		if (so->so_rcv.sb_state & SBS_CANTRCVMORE) { /* TODO */
 			revents |= events & (POLLIN | POLLRDNORM);
 			if (so->so_snd.sb_state & SBS_CANTSENDMORE)
 				revents |= POLLHUP;
 		}
 	}
+#if DOTR
+	trace_sopoll_gl_info(gettid(), events, __LINE__);
+#endif
 
     if (revents == 0 || events & EPOLLET) {
         if (events & (POLLIN | POLLPRI | POLLRDNORM | POLLRDBAND)) {
-            so->so_rcv.sb_flags |= SB_SEL;
+            so->so_rcv.sb_flags |= SB_SEL; // ????
         }
 
         if (events & (POLLOUT | POLLWRNORM)) {
@@ -3200,6 +3280,10 @@ sopoll_generic_locked(struct socket *so, int events)
         }
     }
 
+#if DOTR
+	trace_sopoll_gl_info(gettid(), events, __LINE__);
+	trace_sopoll_gl_ret(gettid(), events, revents);
+#endif
     return revents;
 }
 

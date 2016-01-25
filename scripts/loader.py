@@ -15,6 +15,28 @@ apps_dir = os.path.join(osv_dir, 'apps')
 external = os.path.join(osv_dir, 'external', arch)
 modules = os.path.join(osv_dir, 'modules')
 
+xmodules = []
+xmodules.append(os.path.join(osv_dir, '../mike-apps/tcp-client'))
+xmodules.append(os.path.join(osv_dir, '../mike-apps/vt-test'))
+## xmodules.append(os.path.join(os.environ['HOME'], 'openmpi-bin/lib'))
+#
+ompi_dir = 'open-mpi'
+openfoam_dir = 'OpenFOAM'
+if 0:
+    ompi_dir = 'open-mpi-orig'
+    openfoam_dir = 'OpenFOAM-orig'
+xmodules.append(os.path.join(osv_dir, '../mike-apps/' + ompi_dir + '/ompi-release/build-osv-symbols/orte/tools/orted/.libs'))
+xmodules.append(os.path.join(osv_dir, '../mike-apps/' + ompi_dir + '/ompi-release/build-osv-symbols/orte/tools/orterun/.libs/'))
+xmodules.append(os.path.join(osv_dir, '../mike-apps/' + ompi_dir + '/ompi-release/build-osv-symbols/ompi/.libs'))
+xmodules.append(os.path.join(osv_dir, '../mike-apps/' + ompi_dir + '/ompi-release/build-osv-symbols/opal/.libs/'))
+xmodules.append(os.path.join(osv_dir, '../mike-apps/' + ompi_dir + '/ompi-release/build-osv-symbols/orte/.libs'))
+xmodules.append(os.path.join(osv_dir, '../mike-apps/' + ompi_dir + '/ompi-release/build-osv-symbols/ompi/contrib/vt/vt/vtlib/.libs'))
+xmodules.append(os.path.join(osv_dir, '../mike-apps/' + ompi_dir + '/ompi-release/build-osv-symbols/ompi/contrib/vt/vt/tools/vtunify/mpi/.libs'))
+xmodules.append(os.path.join(osv_dir, '../mike-apps/' + ompi_dir + '/ompi-release/build-osv-symbols/ompi/contrib/vt/vt/tools/vtunify/.libs'))
+xmodules.append(os.path.join(osv_dir, '../mike-apps/' + ompi_dir + '/ompi-release/build-osv-symbols/ompi/contrib/vt/vt/extlib/otf/otflib/.libs'))
+xmodules.append(os.path.join(osv_dir, '../mike-apps/' + openfoam_dir + '/ROOTFS/usr/lib/'))
+xmodules.append(os.path.join(osv_dir, 'apps/prf-test1/'))
+
 sys.path.append(os.path.join(osv_dir, 'scripts'))
 
 from osv.trace import (Trace, Thread, TracePoint, BacktraceFormatter,
@@ -161,7 +183,9 @@ def translate(path):
         return file
     # Next, search for file in configured directories
     name = os.path.basename(path)
-    for top in [build_dir, external, modules, apps_dir, '/zfs']:
+    all_dirs = [build_dir, external, modules, apps_dir, '/zfs']
+    all_dirs.extend(xmodules)
+    for top in all_dirs:
         for root, dirs, files in os.walk(top):
             if name in files:
                 return os.path.join(root, name)
@@ -680,15 +704,20 @@ class osv_syms(gdb.Command):
                              gdb.COMMAND_USER, gdb.COMPLETE_NONE)
     def invoke(self, arg, from_tty):
         syminfo_resolver.clear_cache()
+        objmap = open('object-map.txt', 'w')
+        # objmap.write("baseaddr\tosv_path\thost_path\n")
+        objmap.write("%s\t%s\t%s\n" % (hex(0), "loader.elf", os.path.abspath(os.path.curdir)+'/build/debug.x64/loader.elf'))
         for obj in read_vector(gdb.lookup_global_symbol('elf::program::s_objs').value()):
             base = to_int(obj['_base'])
             obj_path = obj['_pathname']['_M_dataplus']['_M_p'].string()
             path = translate(obj_path)
+            objmap.write("%s\t%s\t%s\n" % (hex(base), obj_path, path))
             if not path:
                 print('ERROR: Unable to locate object file for:', obj_path, hex(base))
             else:
                 print(path, hex(base))
                 load_elf(path, base)
+        objmap.close()
 
 class osv_load_elf(gdb.Command):
     def __init__(self):
@@ -1548,6 +1577,52 @@ class osv_percpu(gdb.Command):
                     return
             gdb.write('%s\n'%target)
 
+
+import socket
+def ntohs(val):
+    return socket.htons(val)
+
+def ntohl(val):
+    return socket.htonl(val)
+
+def ipby_print_so_list_ii(ii, show_null=True):
+#    def invoke(self, args, from_tty):
+    so_list = gdb.lookup_global_symbol('so_list').value()
+    #gdb.write('XX so_list addr = %s\n' % str(so_list))
+    soinf = gdb.parse_and_eval('so_list[0][%s]' % (ii))
+    soinf_addr = gdb.parse_and_eval('so_list[0][%s]' % (ii))
+    if soinf:
+        print('XX (*so_list)[%s] = (%s) %s:%s_0x%08x:%s -> %s:%s_0x%08x:%s, is_accepted=%d, .accept=%s .connecting=%s .lister=%s' %
+            ( ii, soinf,
+                soinf['my_id'], soinf['fd'], ntohl(int(soinf['my_addr'])), ntohs(int(soinf['my_port'])),
+                soinf['peer_id'], soinf['peer_fd'], ntohl(int(soinf['peer_addr'])), ntohs(int(soinf['peer_port'])),
+                soinf['is_accepted'], soinf['accept_soinf'], soinf['connecting_soinf'], soinf['listen_soinf']
+                ))
+    elif show_null:
+        print('XX (*so_list)[%s] = (%s) NULL' % (ii, soinf))
+    return
+
+class osv_ipby(gdb.Command):
+    '''osv ipby ...  show info about ipbypass data'''
+    def __init__(self):
+        gdb.Command.__init__(self, 'osv ipby', gdb.COMMAND_USER,
+                             gdb.COMPLETE_NONE, True)
+
+class osv_ipby_sol(gdb.Command):
+    '''osv ipby sol ID  prints info about sock_info in so_list at index ID'''
+    def __init__(self):
+        gdb.Command.__init__(self, 'osv ipby sol',
+                             gdb.COMMAND_USER, gdb.COMPLETE_NONE)
+    def invoke(self, args, from_tty):
+        if args:
+            ii = args.split()[0]
+            #print('ii = %s' % str(ii))
+            ipby_print_so_list_ii(ii)
+        else:
+            for ii in range(9):
+                ipby_print_so_list_ii(ii, False)
+
+
 osv()
 osv_heap()
 osv_memory()
@@ -1575,5 +1650,7 @@ osv_pagetable()
 osv_pagetable_walk()
 osv_runqueue()
 osv_percpu()
+osv_ipby()
+osv_ipby_sol()
 
 setup_libstdcxx()

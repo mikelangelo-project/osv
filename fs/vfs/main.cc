@@ -83,6 +83,15 @@
 
 using namespace std;
 
+/*---------------------------------------------------------------------*/
+class sock_info;
+sock_info* sol_find(int fd);
+void sol_remove(int fd, int protocol);
+void sol_print(int fd);
+int soi_ioctl(int fd, u_long cmd, void *data);
+
+/*---------------------------------------------------------------------*/
+
 
 #ifdef DEBUG_VFS
 int	vfs_debug = VFSDB_FLAGS;
@@ -234,6 +243,20 @@ int close(int fd)
 {
     int error;
 
+    if(fd>2) {
+        //fprintf_pos(stderr, "INFO close fd=%d\n", fd);
+        sock_info* soinf = sol_find(fd);
+        if (soinf) {
+            if(fd==13) {
+                //sleep(1);
+            }
+            fprintf_pos(stderr, "INFO close-ing socket fd=%d\n", fd);
+            sol_remove(fd, -1);
+            sol_print(fd);
+        }
+    }
+
+
     trace_vfs_close(fd);
     error = fdclose(fd);
     if (error)
@@ -361,10 +384,26 @@ ssize_t pread(int fd, void *buf, size_t count, off_t offset)
     return -1;
 }
 
+//#include <bsd/sys/sys/socket.h>
+//#include <bsd/sys/sys/socketvar.h>
+class sock_info;
+sock_info* sol_find(int fd);
+//sock_info* sol_find_peer(int fd, uint32_t peer_addr, ushort peer_port);
+ssize_t recvfrom_bypass(int fd, void *__restrict buf, size_t len);
+ssize_t sendto_bypass(int fd, const void *buf, size_t len, int flags,
+    const struct bsd_sockaddr *addr, socklen_t alen);
+void sendto_bypass_part2(int fd);
+bool fd_is_bypassed(int fd);
 LFS64(pread);
 
 ssize_t read(int fd, void *buf, size_t count)
 {
+    if(fd>2) {
+        //fprintf_pos(stderr, "INFO read fd=%d\n", fd);
+    }
+    if (fd_is_bypassed(fd)) {
+        return recvfrom_bypass(fd, buf, count);
+    }
     return pread(fd, buf, count, -1);
 }
 
@@ -403,9 +442,20 @@ ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset)
 
 LFS64(pwrite);
 
-ssize_t write(int fd, const void *buf, size_t count)
+ssize_t write(int fd, const void *buf, size_t count) /**/
 {
-    return pwrite(fd, buf, count, -1);
+    int ret;
+    if(fd>2) {
+        //fprintf_pos(stderr, "INFO write fd=%d\n", fd);
+    }
+    if(fd_is_bypassed(fd)) {
+        ret = sendto_bypass(fd, buf, count, 0, nullptr, 0);
+        return ret;
+    }
+    
+    ret = pwrite(fd, buf, count, -1);
+    //sendto_bypass_part2(fd);
+    return ret;
 }
 
 ssize_t preadv(int fd, const struct iovec *iov, int iovcnt, off_t offset)
@@ -494,6 +544,8 @@ int ioctl(int fd, unsigned long int request, ...)
     error = fget(fd, &fp);
     if (error)
         goto out_errno;
+
+    error = soi_ioctl(fd, request, arg);
 
     error = sys_ioctl(fp, request, arg);
     fdrop(fp);

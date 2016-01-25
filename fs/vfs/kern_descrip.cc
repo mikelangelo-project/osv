@@ -18,6 +18,8 @@
 
 #include <bsd/sys/sys/queue.h>
 
+#include <osv/ipbypass.h>
+
 using namespace osv;
 
 /*
@@ -51,6 +53,9 @@ int _fdalloc(struct file *fp, int *newfd, int min_fd)
 
             /* Install */
             gfdt[fd].assign(fp);
+#if FILE_WITH_FD
+            fp->fd = fd;
+#endif
             *newfd = fd;
         }
 
@@ -59,6 +64,26 @@ int _fdalloc(struct file *fp, int *newfd, int min_fd)
 
     fdrop(fp);
     return EMFILE;
+}
+
+//int fd_from_file(struct file *fp)
+int fd_from_file_v1(struct file *fp)
+{
+    int fd, fd2=-2;
+
+    for (fd = 0; fd < FDMAX; fd++) {
+        if (gfdt[fd].read() == fp)
+            fd2 = fd;
+    }
+
+    return fd2;
+}
+
+int fd_from_file(struct file *fp)
+{
+#if FILE_WITH_FD
+    return fp? fp->fd: 16383;
+#endif
 }
 
 extern "C"
@@ -89,6 +114,11 @@ int fdclose(int fd)
         }
 
         gfdt[fd].assign(nullptr);
+
+#if FILE_WITH_FD
+        //fhold(fp);// je to ok?  -- ne NI NI NI
+        fp->fd = -2;
+#endif
     }
 
     fdrop(fp);
@@ -113,6 +143,11 @@ int fdset(int fd, struct file *fp)
         orig = gfdt[fd].read_by_owner();
         /* Install new file structure in place */
         gfdt[fd].assign(fp);
+#if FILE_WITH_FD
+        if(orig)
+            orig->fd = -2;
+        fp->fd = fd;
+#endif
     }
 
     if (orig)
@@ -156,24 +191,34 @@ int fget(int fd, struct file **out_fp)
     }
 
     *out_fp = fp;
+#if FILE_WITH_FD
+    if(fd >= 3) {
+        assert(fp->fd == fd);
+    }
+#endif
     return 0;
 }
 
-file::file(unsigned flags, filetype_t type, void *opaque)
+file::file(unsigned flags, filetype_t type, void *opaque) /**/
     : f_flags(flags)
     , f_count(1)
     , f_data(opaque)
     , f_type(type)
 {
+#if FILE_WITH_FD
+    fd = -2; // 16383
+#endif
 }
 
 void file::wake_epoll(int events)
 {
     WITH_LOCK(f_lock) {
+        //mydebug(" this=fp=%p f_epolls=%p\n", this, &f_epolls);
         if (!f_epolls) {
             return;
         }
         for (auto&& ep : *f_epolls) {
+            //mydebug(" this=fp=%p calling epoll_wake(ep=%p), epoll_wake=%p\n", this, ep, epoll_wake);
             epoll_wake(ep);
         }
     }

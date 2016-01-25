@@ -139,7 +139,7 @@ void sockbuf_iolock::unlock(mutex& mtx)
 }
 
 template<typename Clock>
-int sbwait_tmo(socket* so, struct sockbuf *sb, boost::optional<std::chrono::time_point<Clock>> timeout)
+int sbwait_tmo(socket* so, struct sockbuf *sb, boost::optional<std::chrono::time_point<Clock>> timeout) /**/
 {
 	SOCK_LOCK_ASSERT(so);
 
@@ -185,7 +185,7 @@ static inline boost::optional<std::chrono::time_point<Clock>> parse_timeout(int 
  * Wait for data to arrive at/drain from a socket buffer.
  */
 int
-sbwait(socket* so, struct sockbuf *sb)
+sbwait(socket* so, struct sockbuf *sb) /**/
 {
 	return sbwait_tmo(so, sb, parse_timeout<osv::clock::uptime>(sb->sb_timeo));
 }
@@ -243,6 +243,7 @@ void so_wake_poll(struct socket *so, struct sockbuf *sb)
  * then release it to avoid lock order issues.  It's not clear that's
  * correct.
  */
+TRACEPOINT(trace_tin_sowakeup_info, "tid=%d line=%d msg=%s so=%p", long, int, const char*, void*);
 void
 sowakeup(struct socket *so, struct sockbuf *sb)
 {

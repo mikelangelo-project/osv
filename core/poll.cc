@@ -63,6 +63,8 @@ TRACEPOINT(trace_poll, "_pfd=%p, _nfds=%lu, _timeout=%d", struct pollfd *, nfds_
 TRACEPOINT(trace_poll_ret, "%d", int);
 TRACEPOINT(trace_poll_err, "%d", int);
 
+#include <osv/ipbypass.h>
+
 using namespace std;
 
 int poll_no_poll(int events)
@@ -105,10 +107,44 @@ void poll_drain(struct file* fp)
  *
  * Returns the number of file descriptors changed
  */
+TIMED_TRACEPOINT(ipby_poll_scan, "tid=%d nevent=%d", int, int)
 int poll_scan(std::vector<poll_file>& _pfd)
 {
+#if 1
     dbg_d("poll_scan()");
+#else
+    {
+        int fd = -1;
+        int pos = 0;
+        char msg[1024] = "poll_scan() pfd=[";
 
+        pos = strlen(msg);
+        for (auto& e : _pfd) {
+            auto* entry = &e;
+            auto* fp = entry->fp.get();
+            if (!fp) {
+                continue;
+            }
+            fd = fd_from_file(fp);
+            pos += snprintf(msg+pos, sizeof(msg)-pos, "%d ", fd);
+        }
+        pos += snprintf(msg+pos, sizeof(msg)-pos, "]");
+
+        // show message only if it changes, on once in a while
+        thread_local char* tmsg = nullptr;
+        thread_local int cnt=0;
+        if (tmsg == nullptr) {
+            tmsg = (char*)malloc(sizeof(msg));
+        }
+        if (strcmp(msg, tmsg) != 0 || cnt%100000==0) {
+            dbg_d(msg);
+        }
+        cnt++;
+        strncpy(tmsg, msg, sizeof(msg));
+    }
+#endif
+
+    ipby_poll_scan(gettid(), 0);
     int nr_events = 0;
 
     for (auto& e : _pfd) {
@@ -136,6 +172,7 @@ int poll_scan(std::vector<poll_file>& _pfd)
             entry->revents &= ~POLLOUT;
     }
 
+    ipby_poll_scan_ret(gettid(), nr_events);
     return nr_events;
 }
 

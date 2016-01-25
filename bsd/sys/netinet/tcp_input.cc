@@ -92,7 +92,13 @@
 #include <osv/net_trace.hh>
 #include <osv/aligned_new.hh>
 
+#include <osv/ipbypass.h>
+
 TRACEPOINT(trace_tcp_input_ack, "%p: We've got ACK: %u", void*, unsigned int);
+
+TIMED_TRACEPOINT(trace_tin_input, "tid=%d", long);
+      TRACEPOINT(trace_tin_input_info, "tid=%d line=%d msg=%s so=%p so2=%p sport=%d dport=%d", long, int, const char*, void*, void*, short, short);
+
 
 const int tcprexmtthresh = 3;
 
@@ -427,7 +433,22 @@ tcp_fields_to_host(struct tcphdr *th)
 
 
 void
+tcp_input_real(struct mbuf *m, int off0);
+void
 tcp_input(struct mbuf *m, int off0)
+{
+	static int cnt=0;
+	trace_tin_input(gettid());
+	mydebug("ENTER tcp_input depth_cnt=%d\n", cnt++);
+	tcp_input_real(m, off0);
+	mydebug("LEAVE tcp_input depth_cnt=%d\n\n", --cnt);
+	trace_tin_input_ret(gettid());
+}
+
+struct socket *g_listen_so = NULL;
+
+void
+tcp_input_real(struct mbuf *m, int off0)
 {
 	struct tcphdr *th = NULL;
 	struct ip *ip = NULL;
@@ -435,6 +456,7 @@ tcp_input(struct mbuf *m, int off0)
 	struct inpcb *inp = NULL;
 	struct tcpcb *tp = NULL;
 	struct socket *so = NULL;
+	struct socket *listen_so = NULL;
 	u_char *optp = NULL;
 	int optlen = 0;
 	int len;
@@ -762,6 +784,10 @@ relocked:
 			 * NB: syncache_expand() doesn't unlock
 			 * inp and tcpinfo locks.
 			 */
+			mydebug("TCP ACK XXX server, old so=%p\n", so);
+			// Stari so treba sorwakeup/_locked() - to je tisti socket, nad katerim se je listen() klical.
+			// Novi je tisti, ki ga bo accept vrnil.
+			listen_so = so;
 			if (!syncache_expand(&inc, &to, th, &so, m)) {
 				/*
 				 * No syncache entry or ACK was not
@@ -772,6 +798,10 @@ relocked:
 				rstreason = BANDLIM_RST_OPENPORT;
 				goto dropwithreset;
 			}
+			mydebug("TCP ACK XXX server, new so=%p\n", so);
+
+			mydebug("TCP ACK AAA for server, so=%p so->fp=%p, th->sport=%d th->dport=%d\n",
+				so, so->fp, ntohs(th->th_sport), ntohs(th->th_dport));
 			if (so == NULL) {
 				/*
 				 * We completed the 3-way handshake
@@ -814,13 +844,31 @@ relocked:
 			 * the mbuf chain.
 			 */
 			bool want_close;
+			mydebug("TCP ACK BBB for server, so=%p so->fp=%p, th->sport=%d th->dport=%d\n",
+				so, so->fp, ntohs(th->th_sport), ntohs(th->th_dport));
 			tcp_do_segment(m, th, so, tp, drop_hdrlen, tlen,
 			    iptos, ti_locked, want_close);
+			// INJECT wakeup. TODO - in kdo bi to moral normalno klicati?
+			if (listen_so) {
+				mydebug("                (  data so=%p) sb_notify(sb)==((sb)->sb_flags & (SB_WAIT | SB_SEL | SB_ASYNC | SB_UPCALL | SB_AIO | SB_KNOTE))=0x%08x\n",
+					       so, ((       so->so_rcv).sb_flags & (SB_WAIT | SB_SEL | SB_ASYNC | SB_UPCALL | SB_AIO | SB_KNOTE)) );
+				mydebug("sorwakeup_locked(listen_so=%p) sb_notify(sb)==((sb)->sb_flags & (SB_WAIT | SB_SEL | SB_ASYNC | SB_UPCALL | SB_AIO | SB_KNOTE))=0x%08x soreadable(so)=%d\n",
+					listen_so, ((listen_so->so_rcv).sb_flags & (SB_WAIT | SB_SEL | SB_ASYNC | SB_UPCALL | SB_AIO | SB_KNOTE)),
+					soreadable(listen_so) );
+				mydebug("                 listen_so=%p) soreadabledata(so)=%d\n",
+					listen_so,
+					soreadabledata(listen_so) );
+				mybreak();
+// TODO - a bi so ta sorwakeup moral (se) nekje drugje klicati ?
+				//sorwakeup(listen_so);
+			}
+			trace_tin_input_info(gettid(), __LINE__, "conn-accepted", listen_so, so, ntohs(th->th_sport), ntohs(th->th_dport));
 			INP_INFO_UNLOCK_ASSERT(&V_tcbinfo);
 			// if tcp_close() indeed closes, it also unlocks
 			if (!want_close || tcp_close(tp)) {
 				INP_UNLOCK(inp);
 			}
+			//sorwakeup(listen_so); // ne naredi nic, se so->so_rcv.sb_flags |= SB_SEL ali SB_AIO ali kar ze flag ni nastavljen
 			return;
 		}
 		/*
@@ -911,6 +959,7 @@ relocked:
 		}
 		if (th->th_dport == th->th_sport &&
 		    ip->ip_dst.s_addr == ip->ip_src.s_addr) {
+			 /* bingo */
 			if ((s = tcp_log_addrs(&inc, th, NULL, NULL)))
 			    bsd_log(LOG_DEBUG, "%s; %s: Listen socket: "
 				"Connection attempt from/to self "
@@ -937,8 +986,33 @@ relocked:
 			tcp_trace(TA_INPUT, ostate, tp,
 			    (void *)tcp_saveipgen, &tcp_savetcp, 0);
 #endif
+		int fd = fd_from_file(so->fp); // to je listen_fd
+		listen_so = so; // ker syncache_add() nastavi so na NULL
+		g_listen_so = so;
+		mydebug("TCP SYN so->so_rcv.sb_flags 0x%08x 0x%08x\n", so? so->so_rcv.sb_flags: -1, g_listen_so->so_rcv.sb_flags)
 		tcp_dooptions(&to, optp, optlen, TO_SYN);
+		mydebug("TCP SYN so->so_rcv.sb_flags 0x%08x 0x%08x\n", so? so->so_rcv.sb_flags: -1, g_listen_so->so_rcv.sb_flags)
 		syncache_add(&inc, &to, th, inp, &so, m);
+		mydebug("TCP SYN so->so_rcv.sb_flags 0x%08x 0x%08x\n", so? so->so_rcv.sb_flags: -1, g_listen_so->so_rcv.sb_flags)
+#if 0
+		// Zal mydebug pokvari podatke , sklad, se kaj ?
+		// razen, ce je bil wrk array beyond-end access kriv?
+		mydebug("TCP SYN is valid A, adding new sock_info fd=%d me:?_0x%08x:%d <- peer:?_0x%08x:%d\n",
+			fd,
+			ntohl(ip->ip_dst.s_addr), ntohs(th->th_dport),
+			ntohl(ip->ip_src.s_addr), ntohs(th->th_sport));
+		mydebug("TCP SYN is valid B, adding new sock_info fd=%d me:?_0x%08x:%d <- peer:?_0x%08x:%d\n",
+			fd,
+			ntohl(ip->ip_dst.s_addr), ntohs(th->th_dport),
+			ntohl(ip->ip_src.s_addr), ntohs(th->th_sport));
+		mydebug("TCP SYN is valid C, adding new sock_info fd=%d me:?_0x%08x:%d <- peer:?_0x%08x:%d\n",
+			fd,
+			ntohl(ip->ip_dst.s_addr), ntohs(th->th_dport),
+			ntohl(ip->ip_src.s_addr), ntohs(th->th_sport));
+#endif
+		ipby_server_alloc_sockinfo(fd, ip->ip_dst.s_addr, th->th_dport, ip->ip_src.s_addr, th->th_sport);
+		mydebug("TCP SYN so->so_rcv.sb_flags 0x%08x 0x%08x\n", so? so->so_rcv.sb_flags: -1, g_listen_so->so_rcv.sb_flags)
+
 		/*
 		 * Entry added to syncache and mbuf consumed.
 		 * Everything already unlocked by syncache_add().
@@ -1206,6 +1280,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			tp->ts_recent = to.to_tsval;
 		}
 
+		//mydebug("so=%p tlen=%d\n", so, tlen);
 		if (tlen == 0) {
 			if (th->th_ack > tp->snd_una &&
 			    th->th_ack <= tp->snd_max &&
@@ -1270,6 +1345,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 				 * typically means increasing the congestion
 				 * window.
 				 */
+				/**/
 				cc_ack_received(tp, th, CC_ACK);
 
 				tp->snd_una = th->th_ack;
@@ -1302,7 +1378,10 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 				else if (!tcp_timer_active(tp, TT_PERSIST))
 					tcp_timer_activate(tp, TT_REXMT,
 						      tp->t_rxtcur);
-				sowwakeup_locked(so);
+				mydebug("sowwakeup_locked(so=%p)\n", so);
+				mybreak();
+//				sowwakeup_locked(so); /**/
+				sorwakeup_locked(so); /**/
 				if (so->so_snd.sb_cc)
 					(void) tcp_output(tp);
 				goto check_delack;
@@ -1413,6 +1492,8 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 				m_adj(m, drop_hdrlen);	/* delayed header drop */
 				sbappendstream_locked(so, &so->so_rcv, m);
 			}
+			//mydebug("sorwakeup_locked(so=%p)\n", so);
+			mybreak();
 			sorwakeup_locked(so);
 			if (DELAY_ACK(tp)) {
 				tp->t_flags |= TF_DELACK;
@@ -1524,11 +1605,25 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 				tp->t_flags &= ~TF_NEEDFIN;
 				thflags &= ~TH_SYN;
 			} else {
+				int fd = -1;
+				fd = fd_from_file(so->fp);
+				mydebug("TCP set_state TCPS_ESTABLISHED client-side, so=%p so->fp=%p fd=%d\n", so, so->fp, fd);
+				// th->th_sport - listening port od server strani, th->th_dport - random port, iz katerega se client povezuje
+				connect_from_tcp_etablished_client(fd, 0, th->th_sport);
+				//mybreak();
+				/**/
 				tp->set_state(TCPS_ESTABLISHED);
 				tcp_setup_net_channel(tp, m->M_dat.MH.MH_pkthdr.rcvif);
 				cc_conn_init(tp);
 				tcp_timer_activate(tp, TT_KEEP,
 				    TP_KEEPIDLE(tp));
+
+				// debug test
+				// mislim, da tega ne rabim. saj thr se je zbudil, samo wrk ni nic naredil.
+				// Ali pa morda moras zbuditi, ker drugace ima server nginx en 2.7 sec delay na zacetku (vsakega connenctiona?)
+				// client je ze poslal pakete ven, server accept se pa se kar ni zacel izvajati
+				// Ma, najbrz ni treba.
+				sowwakeup(so);
 			}
 		} else {
 			/*
@@ -1541,6 +1636,8 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			 *        SYN-SENT* -> SYN-RECEIVED*
 			 * If there was no CC option, clear cached CC value.
 			 */
+			mydebug("TCP set_state TCPS_SYN_RECEIVED, simultaneous open, ?/client side, so=%p so->fp=%p sport=%d dport=%d\n", so, so->fp,
+				ntohs(th->th_sport), ntohs(th->th_dport));
 			tp->t_flags |= (TF_ACKNOW | TF_NEEDSYN);
 			tcp_timer_activate(tp, TT_REXMT, 0);
 			tp->set_state(TCPS_SYN_RECEIVED);
@@ -1894,6 +1991,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	if ((thflags & TH_ACK) == 0) {
 		if (tp->get_state() == TCPS_SYN_RECEIVED ||
 		    (tp->t_flags & TF_NEEDSYN))
+			/**/
 			goto step6;
 		else if (tp->t_flags & TF_ACKNOW)
 			goto dropafterack;
@@ -1910,6 +2008,7 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	 * In SYN_RECEIVED state, the ack ACKs our SYN, so enter
 	 * ESTABLISHED state and continue processing.
 	 * The ACK was checked above.
+	 bingo
 	 */
 	case TCPS_SYN_RECEIVED:
 
@@ -1931,10 +2030,19 @@ tcp_do_segment(struct mbuf *m, struct tcphdr *th, struct socket *so,
 			tp->set_state(TCPS_FIN_WAIT_1);
 			tp->t_flags &= ~TF_NEEDFIN;
 		} else {
+			int fd=-1;
+			fd = fd_from_file(so->fp); // tu je se neveljaven fd. kern_accept() bo sele allociral nov fd.
+			mydebug("TCP set_state TCPS_ESTABLISHED server-side, so=%p so->fp=%p fd=%d\n", so, so->fp, fd);
+			//connect_from_tcp_etablished_server(fd, 0);
+			//mybreak();
 			tp->set_state(TCPS_ESTABLISHED);
 			tcp_setup_net_channel(tp, m->M_dat.MH.MH_pkthdr.rcvif);
 			cc_conn_init(tp);
 			tcp_timer_activate(tp, TT_KEEP, TP_KEEPIDLE(tp));
+			//fd = fd_from_file(so->fp);
+			//mydebug("TCP set_state TCPS_ESTABLISHED server-side, so=%p so->fp=%p fd=%d\n", so, so->fp, fd);
+			// tule je najbrz fd od novega socket, ne od listen socket
+			sorwakeup(so);
 		}
 		/*
 		 * If segment contains data or ACK, will call tcp_reass()
@@ -2227,7 +2335,9 @@ process_ACK:
 			tp->snd_wnd -= acked;
 			ourfinisacked = 0;
 		}
-		sowwakeup_locked(so);
+		mydebug("sowwakeup_locked(so=%p)\n", so);
+		//mybreak();
+//		sowwakeup_locked(so);
 		/* Detect una wraparound. */
 		if (!IN_RECOVERY(tp->t_flags) &&
 		    tp->snd_una > tp->snd_recover &&
@@ -2404,6 +2514,7 @@ dodata:							/* XXX */
 	 * case PRU_RCVD).  If a FIN has already been received on this
 	 * connection then we just ignore the text.
 	 */
+	mydebug("so=%p tlen=%d\n", so, tlen);
 	if ((tlen || (thflags & TH_FIN)) &&
 	    TCPS_HAVERCVDFIN(tp->get_state()) == 0) {
 		tcp_seq save_start = th->th_seq;
@@ -2436,7 +2547,9 @@ dodata:							/* XXX */
 				m_freem(m);
 			else
 				sbappendstream_locked(so, &so->so_rcv, m);
-			sorwakeup_locked(so);
+			mydebug("sorwakeup_locked(so=%p)\n", so);
+			mybreak();
+			sorwakeup_locked(so); /* XXX XXX XXX */
 		} else {
 			/*
 			 * XXX: Due to the header drop above "th" is
@@ -3279,7 +3392,7 @@ tcp_free_net_channel(tcpcb* tp)
 }
 
 void
-tcp_flush_net_channel(tcpcb *tp)
+tcp_flush_net_channel(tcpcb *tp) /**/
 {
 	auto nc = tp->nc;
 	if (nc) {
