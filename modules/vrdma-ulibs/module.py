@@ -1,5 +1,9 @@
 from osv.modules.api import *
 
-require('vrdma_ulibs/libibverbs')
-require('vrdma_ulibs/libmlx4')
-require('vrdma_ulibs/librdmacm')
+_module = '${OSV_BASE}/modules/vrdma-ulibs'
+
+require('vrdma-ulibs/libibverbs')
+require('vrdma-ulibs/libmlx4')
+require('vrdma-ulibs/librdmacm')
+
+default = ""
