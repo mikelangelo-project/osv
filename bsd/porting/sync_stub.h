@@ -20,6 +20,12 @@ struct sx {
     rwlock_t _rw;
 };
 
+struct sx_args {
+        struct sx       *sa_sx;
+        const char      *sa_desc;
+        int             sa_flags;
+};
+
 #define MTX_DEF     0x00000000  /* DEFAULT (sleep) lock */
 #define MTX_DUPOK   0x00000010   /* Don't check for duplicate acquires */
 
@@ -35,6 +41,8 @@ void mtx_lock(struct mtx *mp);
 void mtx_unlock(struct mtx *mp);
 void mtx_assert(struct mtx *mp, int flag);
 
+
+void sx_init_flags(struct sx *m, const char *name, int flag);
 void sx_init(struct sx *m, const char *name);
 void sx_destroy(struct sx *);
 void sx_xlock(struct sx *mp);
@@ -42,6 +50,20 @@ void sx_xunlock(struct sx *mp);
 void sx_slock(struct sx *mp);
 void sx_sunlock(struct sx *mp);
 #define sx_assert(...) do { } while (0)
+
+#define      SX_NOWITNESS            0x04
+
+#define SX_SYSINIT_FLAGS(name, sxa, desc, flags)                        \
+        static struct sx_args name##_args = {                           \
+                (sxa),                                                  \
+                (desc),                                                 \
+                (flags)                                                 \
+        };                                                              \
+        SYSINIT(name##_sx_sysinit, SI_SUB_LOCK, SI_ORDER_MIDDLE,        \
+            sx_sysinit, &name##_args);                                  \
+        SYSUNINIT(name##_sx_sysuninit, SI_SUB_LOCK, SI_ORDER_MIDDLE,    \
+            sx_destroy, (sxa))
+
 
 __END_DECLS
 

@@ -49,6 +49,8 @@ void mtx_assert(struct mtx *mp, int flag)
     }
 }
 
+#define    sx_init_flags(sx, desc, flag)  sx_init(sx, desc)
+
 void sx_init(struct sx *s, const char *name)
 {
     rwlock_init(&s->_rw);
