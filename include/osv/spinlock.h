@@ -33,6 +33,13 @@ void spin_lock(spinlock_t *sl);
 bool spin_trylock(spinlock_t *sl);
 void spin_unlock(spinlock_t *sl);
 
+#define spin_lock_irq(lock)     spin_lock(lock)
+#define spin_unlock_irq(lock)   spin_unlock(lock)
+#define spin_lock_irqsave(lock, flags)                                  \
+    do {(flags) = 0; spin_lock(lock); } while (0)
+#define spin_unlock_irqrestore(lock, flags)                             \
+    do { spin_unlock(lock); } while (0)
+
 __END_DECLS
 
 #ifdef __cplusplus
