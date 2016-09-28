@@ -40,6 +40,18 @@
 
 #define BITS_PER_BYTE           8
 
+int
+flsl(long mask)
+{
+	int bit;
+
+	if (mask == 0)
+		return (0);
+	for (bit = 1; mask != 1; bit++)
+		mask = (unsigned long)mask >> 1;
+	return (bit);
+}
+
 static inline int
 __ffs(int mask)
 {
@@ -318,7 +330,7 @@ test_and_clear_bit(long bit, long *var)
 	bit = (1UL << bit);
 	do {
 		val = *(volatile long *)var;
-	} while (atomic_cmpset_long(var, val, val & ~bit) == 0);
+    } while (atomic_cmpset_long((volatile u_long *)var, val, val & ~bit) == 0);
 
 	return !!(val & bit);
 }
@@ -333,7 +345,7 @@ test_and_set_bit(long bit, long *var)
 	bit = (1UL << bit);
 	do {
 		val = *(volatile long *)var;
-	} while (atomic_cmpset_long(var, val, val | bit) == 0);
+    } while (atomic_cmpset_long((volatile u_long *)var, val, val | bit) == 0);
 
 	return !!(val & bit);
 }
