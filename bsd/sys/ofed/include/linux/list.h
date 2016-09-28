@@ -34,36 +34,36 @@
  * FreeBSD header which requires it here so it is resolved with the correct
  * definition prior to the undef.
  */
-#include <linux/types.h>
+#include <osv/types.h>
 
-#include <sys/param.h>
-#include <sys/kernel.h>
-#include <sys/queue.h>
-#include <sys/cpuset.h>
-#include <sys/jail.h>
-#include <sys/lock.h>
-#include <sys/mutex.h>
-#include <sys/proc.h>
-#include <sys/vnode.h>
-#include <sys/conf.h>
-#include <sys/socket.h>
-#include <sys/mbuf.h>
+/* #include <sys/param.h> */
+/* #include <sys/kernel.h> */
+/* #include <sys/queue.h> */
+/* #include <sys/cpuset.h> */
+/* #include <sys/jail.h> */
+/* #include <sys/lock.h> */
+/* #include <sys/mutex.h> */
+/* #include <sys/proc.h> */
+/* #include <sys/vnode.h> */
+/* #include <sys/conf.h> */
+/* #include <sys/socket.h> */
+/* #include <sys/mbuf.h> */
 
-#include <net/bpf.h>
-#include <net/if.h>
-#include <net/if_types.h>
-#include <net/if_media.h>
-#include <net/vnet.h>
+/* #include <net/bpf.h> */
+/* #include <net/if.h> */
+/* #include <net/if_types.h> */
+/* #include <net/if_media.h> */
+/* #include <net/vnet.h> */
 
-#include <netinet/in.h>
-#include <netinet/in_pcb.h>
-#include <netinet/in_var.h>
+/* #include <netinet/in.h> */
+/* #include <netinet/in_pcb.h> */
+/* #include <netinet/in_var.h> */
 
-#include <netinet6/in6_var.h>
-#include <netinet6/nd6.h>
+/* #include <netinet6/in6_var.h> */
+/* #include <netinet6/nd6.h> */
 
-#include <vm/vm.h>
-#include <vm/vm_object.h>
+/* #include <vm/vm.h> */
+/* #include <vm/vm_object.h> */
 
 #define	prefetch(x)
 
@@ -78,7 +78,7 @@ INIT_LIST_HEAD(struct list_head *list)
 
 	list->next = list->prev = list;
 }
- 
+
 static inline int
 list_empty(const struct list_head *head)
 {
@@ -95,19 +95,19 @@ list_del(struct list_head *entry)
 }
 
 static inline void
-_list_add(struct list_head *new, struct list_head *prev,
+_list_add(struct list_head *new_head, struct list_head *prev,
     struct list_head *next)
 {
 
-	next->prev = new;
-	new->next = next;
-	new->prev = prev;
-	prev->next = new;
+	next->prev = new_head;
+	new_head->next = next;
+	new_head->prev = prev;
+	prev->next = new_head;
 }
 
 static inline void
 list_del_init(struct list_head *entry)
-{	
+{
 
 	list_del(entry);
 	INIT_LIST_HEAD(entry);
@@ -140,17 +140,17 @@ list_del_init(struct list_head *entry)
 #define	list_for_each_prev(p, h) for (p = (h)->prev; p != (h); p = p->prev)
 
 static inline void
-list_add(struct list_head *new, struct list_head *head)
+list_add(struct list_head *new_head, struct list_head *head)
 {
 
-	_list_add(new, head, head->next);
+	_list_add(new_head, head, head->next);
 }
 
 static inline void
-list_add_tail(struct list_head *new, struct list_head *head)
+list_add_tail(struct list_head *new_head, struct list_head *head)
 {
 
-	_list_add(new, head->prev, head);
+	_list_add(new_head, head->prev, head);
 }
 
 static inline void
@@ -170,7 +170,7 @@ list_move_tail(struct list_head *entry, struct list_head *head)
 }
 
 static inline void
-_list_splice(const struct list_head *list, struct list_head *prev,  
+_list_splice(const struct list_head *list, struct list_head *prev,
     struct list_head *next)
 {
 	struct list_head *first;
@@ -191,7 +191,7 @@ list_splice(const struct list_head *list, struct list_head *head)
 {
 
 	_list_splice(list, head, head->next);
-} 
+}
 
 static inline void
 list_splice_tail(struct list_head *list, struct list_head *head)
@@ -199,15 +199,15 @@ list_splice_tail(struct list_head *list, struct list_head *head)
 
 	_list_splice(list, head->prev, head);
 }
- 
+
 static inline void
 list_splice_init(struct list_head *list, struct list_head *head)
 {
 
 	_list_splice(list, head, head->next);
-	INIT_LIST_HEAD(list);   
+	INIT_LIST_HEAD(list);
 }
- 
+
 static inline void
 list_splice_tail_init(struct list_head *list, struct list_head *head)
 {
@@ -216,8 +216,8 @@ list_splice_tail_init(struct list_head *list, struct list_head *head)
 	INIT_LIST_HEAD(list);
 }
 
-#undef LIST_HEAD
-#define LIST_HEAD(name)	struct list_head name = { &(name), &(name) }
+/* #undef LIST_HEAD */
+#define LIST_HEAD_NAME(name)	struct list_head name = { &(name), &(name) }
 
 
 struct hlist_head {
@@ -290,7 +290,7 @@ hlist_add_before(struct hlist_node *n, struct hlist_node *next)
 	next->pprev = &n->next;
 	*(n->pprev) = n;
 }
- 
+
 static inline void
 hlist_add_after(struct hlist_node *n, struct hlist_node *next)
 {
@@ -301,14 +301,14 @@ hlist_add_after(struct hlist_node *n, struct hlist_node *next)
 	if (next->next)
 		next->next->pprev = &next->next;
 }
- 
+
 static inline void
-hlist_move_list(struct hlist_head *old, struct hlist_head *new)
+hlist_move_list(struct hlist_head *old, struct hlist_head *new_head)
 {
 
-	new->first = old->first;
-	if (new->first)
-		new->first->pprev = &new->first;
+	new_head->first = old->first;
+	if (new_head->first)
+		new_head->first->pprev = &new_head->first;
 	old->first = NULL;
 }
 
@@ -371,7 +371,7 @@ static inline int list_is_last(const struct list_head *list,
 {
         return list->next == head;
 }
- 
+
 #define	hlist_entry(ptr, type, field)	container_of(ptr, type, field)
 
 #define	hlist_for_each(p, head)						\
@@ -383,7 +383,7 @@ static inline int list_is_last(const struct list_head *list,
 #define	hlist_for_each_entry(tp, p, head, field)			\
 	for (p = (head)->first;						\
 	    p ? (tp = hlist_entry(p, typeof(*tp), field)): NULL; p = p->next)
- 
+
 #define hlist_for_each_entry_continue(tp, p, field)			\
 	for (p = (p)->next;						\
 	    p ? (tp = hlist_entry(p, typeof(*tp), field)): NULL; p = p->next)
