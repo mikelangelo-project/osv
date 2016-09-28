@@ -30,8 +30,20 @@
 #ifndef	_LINUX_SCATTERLIST_H_
 #define	_LINUX_SCATTERLIST_H_
 
-#include <linux/page.h>
-#include <linux/slab.h>
+/* #include <linux/page.h> */
+/* #include <linux/slab.h> */
+#include <errno.h>
+#include <string.h>
+#include <stdlib.h>
+#include <asm/types.h>
+#include <porting/mmu.h>
+
+typedef vm_paddr_t dma_addr_t;
+
+// osv: linux/compiler.h
+#define unlikely(x)                     __builtin_expect(!!(x), 0)
+#define    __attribute_const__             __attribute__((__const__))
+#define    __user
 
 /*
  * SG table design.
@@ -85,16 +97,16 @@ sg_set_page(struct scatterlist *sg, struct page *page, unsigned int len,
 	sg_page(sg) = page;
 	sg_dma_len(sg) = len;
 	sg->offset = offset;
-	if (offset > PAGE_SIZE)
-		panic("sg_set_page: Invalid offset %d\n", offset);
+	/* if (offset > PAGE_SIZE) */
+	/* 	panic("sg_set_page: Invalid offset %d\n", offset); */
 }
 
-static inline void
-sg_set_buf(struct scatterlist *sg, const void *buf, unsigned int buflen)
-{
-	sg_set_page(sg, virt_to_page(buf), buflen,
-	    ((uintptr_t)buf) & ~PAGE_MASK);
-}
+/* static inline void */
+/* sg_set_buf(struct scatterlist *sg, const void *buf, unsigned int buflen) */
+/* { */
+/* 	sg_set_page(sg, virt_to_page(buf), buflen, */
+/* 	    ((uintptr_t)buf) & ~PAGE_MASK); */
+/* } */
 
 static inline void
 sg_init_table(struct scatterlist *sg, unsigned int nents)
@@ -117,7 +129,9 @@ sg_next(struct scatterlist *sg)
 static inline vm_paddr_t
 sg_phys(struct scatterlist *sg)
 {
-	return sg_page(sg)->phys_addr + sg->offset;
+	// OSv: fix me.
+	/* return sg_page(sg)->phys_addr + sg->offset; */
+	return NULL;
 }
 
 /**
@@ -203,7 +217,8 @@ __sg_free_table(struct sg_table *table, unsigned int max_ents)
 		}
 
 		table->orig_nents -= sg_size;
-		kfree(sgl);
+		/* kfree(sgl); */
+		free(sgl);
 		sgl = next;
 	}
 
@@ -241,7 +256,7 @@ sg_free_table(struct sg_table *table)
  **/
 static inline int
 __sg_alloc_table(struct sg_table *table, unsigned int nents,
-		unsigned int max_ents, gfp_t gfp_mask)
+		unsigned int max_ents)
 {
 	struct scatterlist *sg, *prv;
 	unsigned int left;
@@ -263,7 +278,8 @@ __sg_alloc_table(struct sg_table *table, unsigned int nents,
 
 		left -= sg_size;
 
-		sg = kmalloc(alloc_size * sizeof(struct scatterlist), gfp_mask);
+		/* sg = kmalloc(alloc_size * sizeof(struct scatterlist), gfp_mask); */
+		sg = (scatterlist*) malloc(alloc_size * sizeof(struct scatterlist));
 		if (unlikely(!sg)) {
 		/*
 		 * Adjust entry count to reflect that the last
@@ -314,12 +330,11 @@ __sg_alloc_table(struct sg_table *table, unsigned int nents,
  **/
 
 static inline int
-sg_alloc_table(struct sg_table *table, unsigned int nents, gfp_t gfp_mask)
+sg_alloc_table(struct sg_table *table, unsigned int nents)
 {
 	int ret;
 
-	ret = __sg_alloc_table(table, nents, SG_MAX_SINGLE_ALLOC,
-		gfp_mask);
+	ret = __sg_alloc_table(table, nents, SG_MAX_SINGLE_ALLOC);
 	if (unlikely(ret))
 		__sg_free_table(table, SG_MAX_SINGLE_ALLOC);
 
