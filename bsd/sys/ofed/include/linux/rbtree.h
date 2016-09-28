@@ -29,7 +29,7 @@
 #ifndef	_LINUX_RBTREE_H_
 #define	_LINUX_RBTREE_H_
 
-#include <sys/stddef.h>
+#include <api/stddef.h>
 #include <sys/tree.h>
 
 struct rb_node {
@@ -86,7 +86,7 @@ rb_link_node(struct rb_node *node, struct rb_node *parent,
 }
 
 static inline void
-rb_replace_node(struct rb_node *victim, struct rb_node *new,
+rb_replace_node(struct rb_node *victim, struct rb_node *new_node,
     struct rb_root *root)
 {
 	struct rb_node *p;
@@ -94,16 +94,16 @@ rb_replace_node(struct rb_node *victim, struct rb_node *new,
 	p = rb_parent(victim);
 	if (p) {
 		if (p->rb_left == victim)
-			p->rb_left = new;
+			p->rb_left = new_node;
 		else
-			p->rb_right = new;
+			p->rb_right = new_node;
 	} else
-		root->rb_node = new;
+		root->rb_node = new_node;
 	if (victim->rb_left)
-		rb_set_parent(victim->rb_left, new);
+		rb_set_parent(victim->rb_left, new_node);
 	if (victim->rb_right)
-		rb_set_parent(victim->rb_right, new);
-	*new = *victim;
+		rb_set_parent(victim->rb_right, new_node);
+	*new_node = *victim;
 }
 
 #undef RB_ROOT
