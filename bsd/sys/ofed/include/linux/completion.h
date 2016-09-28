@@ -30,7 +30,7 @@
 #ifndef	_LINUX_COMPLETION_H_
 #define	_LINUX_COMPLETION_H_
 
-#include <linux/errno.h>
+#include <errno.h>
 
 struct completion {
 	unsigned int done;

@@ -32,6 +32,7 @@
 #include <sys/param.h>
 #include <sys/lock.h>
 #include <sys/sx.h>
+#include <porting/sync_stub.h>
 
 struct rw_semaphore {
 	struct sx sx;

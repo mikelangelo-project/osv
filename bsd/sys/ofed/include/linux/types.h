@@ -33,7 +33,7 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/systm.h>
-#include <linux/compiler.h>
+#include <osv/compiler.h>
 #include <asm/types.h>
 
 #ifndef __bitwise__
