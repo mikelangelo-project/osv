@@ -47,12 +47,12 @@ struct rw_semaphore {
 #define	downgrade_write(_rw)		sx_downgrade(&(_rw)->sx)
 #define	down_read_nested(_rw, _sc)	down_read(_rw)
 
-static inline void
-init_rwsem(struct rw_semaphore *rw)
-{
+/* static inline void */
+/* init_rwsem(struct rw_semaphore *rw) */
+/* { */
 
-	memset(&rw->sx, 0, sizeof(rw->sx));
-	sx_init_flags(&rw->sx, "lnxrwsem", SX_NOWITNESS);
-}
+/* 	memset(&rw->sx, 0, sizeof(rw->sx)); */
+/* 	sx_init_flags(&rw->sx, "lnxrwsem", SX_NOWITNESS); */
+/* } */
 
 #endif	/* _LINUX_RWSEM_H_ */
