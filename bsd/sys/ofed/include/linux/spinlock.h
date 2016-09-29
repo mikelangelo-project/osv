@@ -35,8 +35,7 @@
 #include <sys/mutex.h>
 
 #include <linux/compiler.h>
-#include <linux/kernel.h>
-#include <linux/rwlock.h>
+#include <osv/rwlock.h>
 
 typedef struct {
 	struct mtx m;

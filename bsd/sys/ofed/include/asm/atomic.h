@@ -33,6 +33,7 @@
 #include <sys/cdefs.h>
 #include <sys/types.h>
 #include <machine/atomic.h>
+#include <linux/compiler.h>
 
 typedef struct {
 	volatile u_int counter;
