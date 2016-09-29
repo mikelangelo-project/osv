@@ -20,8 +20,9 @@ struct sx {
     rwlock_t _rw;
 };
 
-#define MTX_DEF     0x00000000  /* DEFAULT (sleep) lock */
-#define MTX_DUPOK   0x00000010   /* Don't check for duplicate acquires */
+#define MTX_DEF         0x00000000    /* DEFAULT (sleep) lock */
+#define MTX_NOWITNESS   0x00000008    /* Don't do any witness checking. */
+#define MTX_DUPOK       0x00000010    /* Don't check for duplicate acquires */
 
 #define MA_OWNED        (0x01)
 #define MA_NOTOWNED     (0x02)
