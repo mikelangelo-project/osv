@@ -43,13 +43,11 @@
 int
 flsl(long mask)
 {
-	int bit;
+   if (!mask) {
+       return 0;
+   }
 
-	if (mask == 0)
-		return (0);
-	for (bit = 1; mask != 1; bit++)
-		mask = (unsigned long)mask >> 1;
-	return (bit);
+   return __builtin_clzl(mask) + 1;
 }
 
 static inline int
