@@ -37,6 +37,8 @@
 #include <stdlib.h>
 #include <asm/types.h>
 #include <porting/mmu.h>
+#include <osv/stubbing.hh>
+#include <bsd/porting/netport.h>
 
 typedef vm_paddr_t dma_addr_t;
 
@@ -97,8 +99,8 @@ sg_set_page(struct scatterlist *sg, struct page *page, unsigned int len,
 	sg_page(sg) = page;
 	sg_dma_len(sg) = len;
 	sg->offset = offset;
-	/* if (offset > PAGE_SIZE) */
-	/* 	panic("sg_set_page: Invalid offset %d\n", offset); */
+	if (offset > PAGE_SIZE)
+	    panic("sg_set_page: Invalid offset %d\n", offset);
 }
 
 /* static inline void */
@@ -131,6 +133,7 @@ sg_phys(struct scatterlist *sg)
 {
 	// OSv: fix me.
 	/* return sg_page(sg)->phys_addr + sg->offset; */
+	UNIMPLEMENTED("sg_phys");
 	return NULL;
 }
 
