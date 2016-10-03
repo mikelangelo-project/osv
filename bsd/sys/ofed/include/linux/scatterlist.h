@@ -35,10 +35,11 @@
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
-#include <asm/types.h>
 #include <porting/mmu.h>
+#include <linux/types.h>
 #include <osv/stubbing.hh>
 #include <bsd/porting/netport.h>
+#include <linux/porting.h>
 
 typedef vm_paddr_t dma_addr_t;
 
@@ -220,8 +221,7 @@ __sg_free_table(struct sg_table *table, unsigned int max_ents)
 		}
 
 		table->orig_nents -= sg_size;
-		/* kfree(sgl); */
-		free(sgl);
+		kfree(sgl);
 		sgl = next;
 	}
 
@@ -281,8 +281,7 @@ __sg_alloc_table(struct sg_table *table, unsigned int nents,
 
 		left -= sg_size;
 
-		/* sg = kmalloc(alloc_size * sizeof(struct scatterlist), gfp_mask); */
-		sg = (scatterlist*) malloc(alloc_size * sizeof(struct scatterlist));
+		sg = (scatterlist*) kmalloc(alloc_size * sizeof(struct scatterlist), gfp_mask);
 		if (unlikely(!sg)) {
 		/*
 		 * Adjust entry count to reflect that the last

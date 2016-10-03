@@ -34,7 +34,9 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <osv/compiler.h>
+#include <osv/types.h>
 #include <asm/types.h>
+#include <porting/mmu.h>
 
 #ifndef __bitwise__
 #ifdef __CHECKER__
