@@ -40,18 +40,29 @@
 #define IB_VERBS_H
 
 #include <linux/types.h>
-#include <linux/device.h>
-#include <linux/mm.h>
+#include <osv/device.h>
 #include <linux/dma-mapping.h>
-#include <linux/kref.h>
-#include <linux/list.h>
+#include <porting/sync_stub.h>
+#include <porting/netport.h>
 #include <linux/rwsem.h>
 #include <linux/scatterlist.h>
-#include <linux/workqueue.h>
-
+#include <errno.h>
+#include <osv/rwlock.h>
 #include <asm/uaccess.h>
 #include <linux/rbtree.h>
-#include <linux/mutex.h>
+#include <asm/atomic.h>
+#include <linux/spinlock.h>
+#include <linux/list.h>
+#include <bsd/x64/machine/atomic.h>
+#include <osv/mutex.h>
+#include <linux/porting.h>
+
+enum reg_state{
+    IB_DEV_UNINITIALIZED,
+    IB_DEV_REGISTERED,
+    IB_DEV_UNREGISTERED
+};
+
 
 extern struct workqueue_struct *ib_wq;
 
@@ -456,21 +467,21 @@ enum ib_rate {
  * converted to 2, since 5 Gbit/sec is 2 * 2.5 Gbit/sec.
  * @rate: rate to convert.
  */
-int ib_rate_to_mult(enum ib_rate rate) __attribute_const__;
+//int ib_rate_to_mult(enum ib_rate rate) __attribute_const__;
 
 /**
  * ib_rate_to_mbps - Convert the IB rate enum to Mbps.
  * For example, IB_RATE_2_5_GBPS will be converted to 2500.
  * @rate: rate to convert.
  */
-int ib_rate_to_mbps(enum ib_rate rate) __attribute_const__;
+//int ib_rate_to_mbps(enum ib_rate rate) __attribute_const__;
 
 /**
  * mult_to_ib_rate - Convert a multiple of 2.5 Gbit/sec to an IB rate
  * enum.
  * @mult: multiple to convert.
  */
-enum ib_rate mult_to_ib_rate(int mult) __attribute_const__;
+//enum ib_rate mult_to_ib_rate(int mult) __attribute_const__;
 
 struct ib_ah_attr {
 	struct ib_global_route	grh;
@@ -959,7 +970,7 @@ struct ib_uobject {
 	void		       *object;		/* containing object */
 	struct list_head	list;		/* link to context's list */
 	int			id;		/* index into kernel idr */
-	struct kref		ref;
+	//struct kref		ref;
 	struct rw_semaphore	mutex;		/* protects .live */
 	int			live;
 };
@@ -990,7 +1001,7 @@ struct ib_xrcd {
 	struct inode	       *inode;
 	struct rb_node		node;
 	
-	struct mutex		tgt_qp_mutex;
+	//struct mutex		tgt_qp_mutex;
 	struct list_head	tgt_qp_list;
 };
 
@@ -1167,6 +1178,7 @@ struct ib_dma_mapping_ops {
 					 size_t size, void *cpu_addr,
 					 u64 dma_handle);
 };
+
 
 struct iw_cm_verbs;
 
@@ -1368,14 +1380,10 @@ struct ib_device {
 
 	struct module               *owner;
 	struct device                dev;
-	struct kobject               *ports_parent;
+//	struct kobject               *ports_parent;
 	struct list_head             port_list;
 
-	enum {
-		IB_DEV_UNINITIALIZED,
-		IB_DEV_REGISTERED,
-		IB_DEV_UNREGISTERED
-	}                            reg_state;
+	enum reg_state               reg_state;
 
 	int			     uverbs_abi_ver;
 	u64			     uverbs_cmd_mask;
@@ -1386,7 +1394,7 @@ struct ib_device {
 	u8                           node_type;
 	u8                           phys_port_cnt;
 	struct rb_root		     ib_uverbs_xrcd_table;
-	struct mutex		     xrcd_table_mutex;
+	//mutex		     xrcd_table_mutex;
 };
 
 struct ib_client {
@@ -1400,9 +1408,10 @@ struct ib_client {
 struct ib_device *ib_alloc_device(size_t size);
 void ib_dealloc_device(struct ib_device *device);
 
-int ib_register_device(struct ib_device *device,
-		       int (*port_callback)(struct ib_device *,
-					    u8, struct kobject *));
+/* int ib_register_device(struct ib_device *device, */
+/* 					   int (*port_callback)(struct ib_device *, */
+/* 											u8, struct kobject * )); */
+int ib_register_device(struct ib_device *device);
 void ib_unregister_device(struct ib_device *device);
 
 int ib_register_client   (struct ib_client *client);
@@ -1437,9 +1446,10 @@ static inline int ib_copy_to_udata(struct ib_udata *udata, void *src, size_t len
  * transition from cur_state to next_state is allowed by the IB spec,
  * and that the attribute mask supplied is allowed for the transition.
  */
+/*
 int ib_modify_qp_is_ok(enum ib_qp_state cur_state, enum ib_qp_state next_state,
 		       enum ib_qp_type type, enum ib_qp_attr_mask mask);
-
+*/
 int ib_register_event_handler  (struct ib_event_handler *event_handler);
 int ib_unregister_event_handler(struct ib_event_handler *event_handler);
 void ib_dispatch_event(struct ib_event *event);
@@ -1459,19 +1469,26 @@ int ib_query_gid(struct ib_device *device,
 int ib_query_pkey(struct ib_device *device,
 		  u8 port_num, u16 index, u16 *pkey);
 
+/*
 int ib_modify_device(struct ib_device *device,
 		     int device_modify_mask,
 		     struct ib_device_modify *device_modify);
+*/
 
+/*
 int ib_modify_port(struct ib_device *device,
 		   u8 port_num, int port_modify_mask,
 		   struct ib_port_modify *port_modify);
+*/
 
+/*
 int ib_find_gid(struct ib_device *device, union ib_gid *gid,
 		u8 *port_num, u16 *index);
+*/
 
-int ib_find_pkey(struct ib_device *device,
+/*int ib_find_pkey(struct ib_device *device,
 		 u8 port_num, u16 pkey, u16 *index);
+*/
 
 /**
  * ib_alloc_pd - Allocates an unused protection domain.
@@ -1480,7 +1497,7 @@ int ib_find_pkey(struct ib_device *device,
  * A protection domain object provides an association between QPs, shared
  * receive queues, address handles, memory regions, and memory windows.
  */
-struct ib_pd *ib_alloc_pd(struct ib_device *device);
+//struct ib_pd *ib_alloc_pd(struct ib_device *device);
 
 /**
  * ib_dealloc_pd - Deallocates a protection domain.
@@ -1524,8 +1541,9 @@ int ib_init_ah_from_wc(struct ib_device *device, u8 port_num, struct ib_wc *wc,
  * The address handle is used to reference a local or global destination
  * in all UD QP post sends.
  */
-struct ib_ah *ib_create_ah_from_wc(struct ib_pd *pd, struct ib_wc *wc,
+/*struct ib_ah *ib_create_ah_from_wc(struct ib_pd *pd, struct ib_wc *wc,
 				   struct ib_grh *grh, u8 port_num);
+*/
 
 /**
  * ib_modify_ah - Modifies the address vector associated with an address
@@ -1534,7 +1552,7 @@ struct ib_ah *ib_create_ah_from_wc(struct ib_pd *pd, struct ib_wc *wc,
  * @ah_attr: The new address vector attributes to associate with the
  *   address handle.
  */
-int ib_modify_ah(struct ib_ah *ah, struct ib_ah_attr *ah_attr);
+//int ib_modify_ah(struct ib_ah *ah, struct ib_ah_attr *ah_attr);
 
 /**
  * ib_query_ah - Queries the address vector associated with an address
@@ -1543,7 +1561,7 @@ int ib_modify_ah(struct ib_ah *ah, struct ib_ah_attr *ah_attr);
  * @ah_attr: The address vector attributes associated with the address
  *   handle.
  */
-int ib_query_ah(struct ib_ah *ah, struct ib_ah_attr *ah_attr);
+//int ib_query_ah(struct ib_ah *ah, struct ib_ah_attr *ah_attr);
 
 /**
  * ib_destroy_ah - Destroys an address handle.
@@ -1566,10 +1584,12 @@ int ib_destroy_ah(struct ib_ah *ah);
  * on return.  If ib_create_xrc_srq() succeeds, then max_wr and max_sge
  * will always be at least as large as the requested values.
  */
+/*
 struct ib_srq *ib_create_xrc_srq(struct ib_pd *pd,
 				 struct ib_cq *xrc_cq,
 				 struct ib_xrcd *xrcd,
 				 struct ib_srq_init_attr *srq_init_attr);
+*/
 
 /**
  * ib_create_srq - Creates a SRQ associated with the specified protection
@@ -1599,9 +1619,11 @@ struct ib_srq *ib_create_srq(struct ib_pd *pd,
  * IB_SRQ_LIMIT to set the SRQ's limit and request notification when
  * the number of receives queued drops below the limit.
  */
+/*
 int ib_modify_srq(struct ib_srq *srq,
 		  struct ib_srq_attr *srq_attr,
 		  enum ib_srq_attr_mask srq_attr_mask);
+*/
 
 /**
  * ib_query_srq - Returns the attribute list and current values for the
@@ -1625,12 +1647,14 @@ int ib_destroy_srq(struct ib_srq *srq);
  * @bad_recv_wr: On an immediate failure, this parameter will reference
  *   the work request that failed to be posted on the QP.
  */
+/*
 static inline int ib_post_srq_recv(struct ib_srq *srq,
 				   struct ib_recv_wr *recv_wr,
 				   struct ib_recv_wr **bad_recv_wr)
 {
 	return srq->device->post_srq_recv(srq, recv_wr, bad_recv_wr);
 }
+*/
 
 /**
  * ib_create_qp - Creates a QP associated with the specified protection
@@ -1685,8 +1709,10 @@ int ib_destroy_qp(struct ib_qp *qp);
  *
  * Returns a reference to a sharable QP.
  */
+/*
 struct ib_qp *ib_open_qp(struct ib_xrcd *xrcd,
 			 struct ib_qp_open_attr *qp_open_attr);
+*/
 
 /**
  * ib_close_qp - Release an external reference to a QP.
@@ -1695,7 +1721,7 @@ struct ib_qp *ib_open_qp(struct ib_xrcd *xrcd,
  * The opened QP handle is released by the caller.  The underlying
  * shared QP is not destroyed until all internal references are released.
  */
-int ib_close_qp(struct ib_qp *qp);
+//int ib_close_qp(struct ib_qp *qp);
 
 /**
  * ib_post_send - Posts a list of work requests to the send queue of
@@ -1710,12 +1736,14 @@ int ib_close_qp(struct ib_qp *qp);
  * ib_post_send() will return an immediate error after queueing any
  * earlier work requests in the list.
  */
+/*
 static inline int ib_post_send(struct ib_qp *qp,
 			       struct ib_send_wr *send_wr,
 			       struct ib_send_wr **bad_send_wr)
 {
 	return qp->device->post_send(qp, send_wr, bad_send_wr);
 }
+*/
 
 /**
  * ib_post_recv - Posts a list of work requests to the receive queue of
@@ -1725,12 +1753,14 @@ static inline int ib_post_send(struct ib_qp *qp,
  * @bad_recv_wr: On an immediate failure, this parameter will reference
  *   the work request that failed to be posted on the QP.
  */
+/*
 static inline int ib_post_recv(struct ib_qp *qp,
 			       struct ib_recv_wr *recv_wr,
 			       struct ib_recv_wr **bad_recv_wr)
 {
 	return qp->device->post_recv(qp, recv_wr, bad_recv_wr);
 }
+*/
 
 /*
  * IB_CQ_VECTOR_LEAST_ATTACHED: The constant specifies that
@@ -1754,10 +1784,12 @@ static inline int ib_post_recv(struct ib_qp *qp,
  *
  * Users can examine the cq structure to determine the actual CQ size.
  */
+/*
 struct ib_cq *ib_create_cq(struct ib_device *device,
 			   ib_comp_handler comp_handler,
 			   void (*event_handler)(struct ib_event *, void *),
 			   void *cq_context, int cqe, int comp_vector);
+*/
 
 /**
  * ib_resize_cq - Modifies the capacity of the CQ.
@@ -1766,7 +1798,7 @@ struct ib_cq *ib_create_cq(struct ib_device *device,
  *
  * Users can examine the cq structure to determine the actual CQ size.
  */
-int ib_resize_cq(struct ib_cq *cq, int cqe);
+//int ib_resize_cq(struct ib_cq *cq, int cqe);
 
 /**
  * ib_modify_cq - Modifies moderation params of the CQ
@@ -1775,7 +1807,7 @@ int ib_resize_cq(struct ib_cq *cq, int cqe);
  * @cq_period: max period of time in usec before triggering an event
  *
  */
-int ib_modify_cq(struct ib_cq *cq, u16 cq_count, u16 cq_period);
+//int ib_modify_cq(struct ib_cq *cq, u16 cq_count, u16 cq_period);
 
 /**
  * ib_destroy_cq - Destroys the specified CQ.
@@ -1811,7 +1843,7 @@ static inline int ib_poll_cq(struct ib_cq *cq, int num_entries,
  * this function returns wc_cnt, otherwise, it returns the actual number of
  * unreaped completions.
  */
-int ib_peek_cq(struct ib_cq *cq, int wc_cnt);
+//int ib_peek_cq(struct ib_cq *cq, int wc_cnt);
 
 /**
  * ib_req_notify_cq - Request completion notification on a CQ.
@@ -1853,12 +1885,14 @@ static inline int ib_req_notify_cq(struct ib_cq *cq,
  * @wc_cnt: The number of unreaped completions that should be on the
  *   CQ before an event is generated.
  */
+/*
 static inline int ib_req_ncomp_notif(struct ib_cq *cq, int wc_cnt)
 {
 	return cq->device->req_ncomp_notif ?
 		cq->device->req_ncomp_notif(cq, wc_cnt) :
 		-ENOSYS;
 }
+*/
 
 /**
  * ib_get_dma_mr - Returns a memory region for system memory that is
@@ -1870,19 +1904,21 @@ static inline int ib_req_ncomp_notif(struct ib_cq *cq, int wc_cnt)
  * to create/destroy addresses used with the Lkey or Rkey returned
  * by ib_get_dma_mr().
  */
-struct ib_mr *ib_get_dma_mr(struct ib_pd *pd, int mr_access_flags);
+//struct ib_mr *ib_get_dma_mr(struct ib_pd *pd, int mr_access_flags);
 
 /**
  * ib_dma_mapping_error - check a DMA addr for error
  * @dev: The device for which the dma_addr was created
  * @dma_addr: The DMA address to check
  */
+/*
 static inline int ib_dma_mapping_error(struct ib_device *dev, u64 dma_addr)
 {
 	if (dev->dma_ops)
 		return dev->dma_ops->mapping_error(dev, dma_addr);
 	return dma_mapping_error(dev->dma_device, dma_addr);
 }
+*/
 
 /**
  * ib_dma_map_single - Map a kernel virtual address to DMA address
@@ -1891,6 +1927,7 @@ static inline int ib_dma_mapping_error(struct ib_device *dev, u64 dma_addr)
  * @size: The size of the region in bytes
  * @direction: The direction of the DMA
  */
+/*
 static inline u64 ib_dma_map_single(struct ib_device *dev,
 				    void *cpu_addr, size_t size,
 				    enum dma_data_direction direction)
@@ -1899,6 +1936,7 @@ static inline u64 ib_dma_map_single(struct ib_device *dev,
 		return dev->dma_ops->map_single(dev, cpu_addr, size, direction);
 	return dma_map_single(dev->dma_device, cpu_addr, size, direction);
 }
+*/
 
 /**
  * ib_dma_unmap_single - Destroy a mapping created by ib_dma_map_single()
@@ -1907,6 +1945,7 @@ static inline u64 ib_dma_map_single(struct ib_device *dev,
  * @size: The size of the region in bytes
  * @direction: The direction of the DMA
  */
+/*
 static inline void ib_dma_unmap_single(struct ib_device *dev,
 				       u64 addr, size_t size,
 				       enum dma_data_direction direction)
@@ -1916,7 +1955,9 @@ static inline void ib_dma_unmap_single(struct ib_device *dev,
 	else
 		dma_unmap_single(dev->dma_device, addr, size, direction);
 }
+*/
 
+/*
 static inline u64 ib_dma_map_single_attrs(struct ib_device *dev,
 					  void *cpu_addr, size_t size,
 					  enum dma_data_direction direction,
@@ -1925,7 +1966,9 @@ static inline u64 ib_dma_map_single_attrs(struct ib_device *dev,
 	return dma_map_single_attrs(dev->dma_device, cpu_addr, size,
 				    direction, attrs);
 }
+*/
 
+/*
 static inline void ib_dma_unmap_single_attrs(struct ib_device *dev,
 					     u64 addr, size_t size,
 					     enum dma_data_direction direction,
@@ -1934,6 +1977,7 @@ static inline void ib_dma_unmap_single_attrs(struct ib_device *dev,
 	return dma_unmap_single_attrs(dev->dma_device, addr, size,
 				      direction, attrs);
 }
+*/
 
 /**
  * ib_dma_map_page - Map a physical page to DMA address
@@ -1943,6 +1987,7 @@ static inline void ib_dma_unmap_single_attrs(struct ib_device *dev,
  * @size: The size of the region in bytes
  * @direction: The direction of the DMA
  */
+/*
 static inline u64 ib_dma_map_page(struct ib_device *dev,
 				  struct page *page,
 				  unsigned long offset,
@@ -1953,6 +1998,7 @@ static inline u64 ib_dma_map_page(struct ib_device *dev,
 		return dev->dma_ops->map_page(dev, page, offset, size, direction);
 	return dma_map_page(dev->dma_device, page, offset, size, direction);
 }
+*/
 
 /**
  * ib_dma_unmap_page - Destroy a mapping created by ib_dma_map_page()
@@ -1961,6 +2007,7 @@ static inline u64 ib_dma_map_page(struct ib_device *dev,
  * @size: The size of the region in bytes
  * @direction: The direction of the DMA
  */
+/*
 static inline void ib_dma_unmap_page(struct ib_device *dev,
 				     u64 addr, size_t size,
 				     enum dma_data_direction direction)
@@ -1970,6 +2017,7 @@ static inline void ib_dma_unmap_page(struct ib_device *dev,
 	else
 		dma_unmap_page(dev->dma_device, addr, size, direction);
 }
+*/
 
 /**
  * ib_dma_map_sg - Map a scatter/gather list to DMA addresses
@@ -1978,6 +2026,7 @@ static inline void ib_dma_unmap_page(struct ib_device *dev,
  * @nents: The number of scatter/gather entries
  * @direction: The direction of the DMA
  */
+/*
 static inline int ib_dma_map_sg(struct ib_device *dev,
 				struct scatterlist *sg, int nents,
 				enum dma_data_direction direction)
@@ -1986,6 +2035,7 @@ static inline int ib_dma_map_sg(struct ib_device *dev,
 		return dev->dma_ops->map_sg(dev, sg, nents, direction);
 	return dma_map_sg(dev->dma_device, sg, nents, direction);
 }
+*/
 
 /**
  * ib_dma_unmap_sg - Unmap a scatter/gather list of DMA addresses
@@ -2004,6 +2054,7 @@ static inline void ib_dma_unmap_sg(struct ib_device *dev,
 		dma_unmap_sg(dev->dma_device, sg, nents, direction);
 }
 
+/*
 static inline int ib_dma_map_sg_attrs(struct ib_device *dev,
 				      struct scatterlist *sg, int nents,
 				      enum dma_data_direction direction,
@@ -2011,7 +2062,9 @@ static inline int ib_dma_map_sg_attrs(struct ib_device *dev,
 {
 	return dma_map_sg_attrs(dev->dma_device, sg, nents, direction, attrs);
 }
+*/
 
+/*
 static inline void ib_dma_unmap_sg_attrs(struct ib_device *dev,
 					 struct scatterlist *sg, int nents,
 					 enum dma_data_direction direction,
@@ -2019,11 +2072,14 @@ static inline void ib_dma_unmap_sg_attrs(struct ib_device *dev,
 {
 	dma_unmap_sg_attrs(dev->dma_device, sg, nents, direction, attrs);
 }
+*/
+
 /**
  * ib_sg_dma_address - Return the DMA address from a scatter/gather entry
  * @dev: The device for which the DMA addresses were created
  * @sg: The scatter/gather entry
  */
+/*
 static inline u64 ib_sg_dma_address(struct ib_device *dev,
 				    struct scatterlist *sg)
 {
@@ -2031,12 +2087,14 @@ static inline u64 ib_sg_dma_address(struct ib_device *dev,
 		return dev->dma_ops->dma_address(dev, sg);
 	return sg_dma_address(sg);
 }
+*/
 
 /**
  * ib_sg_dma_len - Return the DMA length from a scatter/gather entry
  * @dev: The device for which the DMA addresses were created
  * @sg: The scatter/gather entry
  */
+/*
 static inline unsigned int ib_sg_dma_len(struct ib_device *dev,
 					 struct scatterlist *sg)
 {
@@ -2044,6 +2102,7 @@ static inline unsigned int ib_sg_dma_len(struct ib_device *dev,
 		return dev->dma_ops->dma_len(dev, sg);
 	return sg_dma_len(sg);
 }
+*/
 
 /**
  * ib_dma_sync_single_for_cpu - Prepare DMA region to be accessed by CPU
@@ -2052,6 +2111,7 @@ static inline unsigned int ib_sg_dma_len(struct ib_device *dev,
  * @size: The size of the region in bytes
  * @dir: The direction of the DMA
  */
+/*
 static inline void ib_dma_sync_single_for_cpu(struct ib_device *dev,
 					      u64 addr,
 					      size_t size,
@@ -2062,6 +2122,7 @@ static inline void ib_dma_sync_single_for_cpu(struct ib_device *dev,
 	else
 		dma_sync_single_for_cpu(dev->dma_device, addr, size, dir);
 }
+*/
 
 /**
  * ib_dma_sync_single_for_device - Prepare DMA region to be accessed by device
@@ -2070,6 +2131,7 @@ static inline void ib_dma_sync_single_for_cpu(struct ib_device *dev,
  * @size: The size of the region in bytes
  * @dir: The direction of the DMA
  */
+/*
 static inline void ib_dma_sync_single_for_device(struct ib_device *dev,
 						 u64 addr,
 						 size_t size,
@@ -2080,6 +2142,7 @@ static inline void ib_dma_sync_single_for_device(struct ib_device *dev,
 	else
 		dma_sync_single_for_device(dev->dma_device, addr, size, dir);
 }
+*/
 
 /**
  * ib_dma_alloc_coherent - Allocate memory and map it for DMA
@@ -2088,6 +2151,7 @@ static inline void ib_dma_sync_single_for_device(struct ib_device *dev,
  * @dma_handle: A pointer for returning the DMA address of the region
  * @flag: memory allocator flags
  */
+/*
 static inline void *ib_dma_alloc_coherent(struct ib_device *dev,
 					   size_t size,
 					   u64 *dma_handle,
@@ -2104,6 +2168,7 @@ static inline void *ib_dma_alloc_coherent(struct ib_device *dev,
 		return ret;
 	}
 }
+*/
 
 /**
  * ib_dma_free_coherent - Free memory allocated by ib_dma_alloc_coherent()
@@ -2112,6 +2177,7 @@ static inline void *ib_dma_alloc_coherent(struct ib_device *dev,
  * @cpu_addr: the address returned by ib_dma_alloc_coherent()
  * @dma_handle: the DMA address returned by ib_dma_alloc_coherent()
  */
+/*
 static inline void ib_dma_free_coherent(struct ib_device *dev,
 					size_t size, void *cpu_addr,
 					u64 dma_handle)
@@ -2121,6 +2187,7 @@ static inline void ib_dma_free_coherent(struct ib_device *dev,
 	else
 		dma_free_coherent(dev->dma_device, size, cpu_addr, dma_handle);
 }
+*/
 
 /**
  * ib_reg_phys_mr - Prepares a virtually addressed memory region for use
@@ -2160,6 +2227,7 @@ struct ib_mr *ib_reg_phys_mr(struct ib_pd *pd,
  *   parameter is ignored.
  * @iova_start: The offset of the region's starting I/O virtual address.
  */
+/*
 int ib_rereg_phys_mr(struct ib_mr *mr,
 		     int mr_rereg_mask,
 		     struct ib_pd *pd,
@@ -2167,13 +2235,14 @@ int ib_rereg_phys_mr(struct ib_mr *mr,
 		     int num_phys_buf,
 		     int mr_access_flags,
 		     u64 *iova_start);
+*/
 
 /**
  * ib_query_mr - Retrieves information about a specific memory region.
  * @mr: The memory region to retrieve information about.
  * @mr_attr: The attributes of the specified memory region.
  */
-int ib_query_mr(struct ib_mr *mr, struct ib_mr_attr *mr_attr);
+//int ib_query_mr(struct ib_mr *mr, struct ib_mr_attr *mr_attr);
 
 /**
  * ib_dereg_mr - Deregisters a memory region and removes it from the
@@ -2189,7 +2258,7 @@ int ib_dereg_mr(struct ib_mr *mr);
  * @max_page_list_len: requested max physical buffer list length to be
  *   used with fast register work requests for this MR.
  */
-struct ib_mr *ib_alloc_fast_reg_mr(struct ib_pd *pd, int max_page_list_len);
+//struct ib_mr *ib_alloc_fast_reg_mr(struct ib_pd *pd, int max_page_list_len);
 
 /**
  * ib_alloc_fast_reg_page_list - Allocates a page list array
@@ -2208,15 +2277,17 @@ struct ib_mr *ib_alloc_fast_reg_mr(struct ib_pd *pd, int max_page_list_len);
  * ib_fast_reg_page_list must not be modified by the caller until the
  * IB_WC_FAST_REG_MR work request completes.
  */
+/*
 struct ib_fast_reg_page_list *ib_alloc_fast_reg_page_list(
 				struct ib_device *device, int page_list_len);
+*/
 
 /**
  * ib_free_fast_reg_page_list - Deallocates a previously allocated
  *   page list array.
  * @page_list - struct ib_fast_reg_page_list pointer to be deallocated.
  */
-void ib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list);
+//void ib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list);
 
 /**
  * ib_update_fast_reg_key - updates the key portion of the fast_reg MR
@@ -2224,11 +2295,13 @@ void ib_free_fast_reg_page_list(struct ib_fast_reg_page_list *page_list);
  * @mr - struct ib_mr pointer to be updated.
  * @newkey - new key to be used.
  */
+/*
 static inline void ib_update_fast_reg_key(struct ib_mr *mr, u8 newkey)
 {
 	mr->lkey = (mr->lkey & 0xffffff00) | newkey;
 	mr->rkey = (mr->rkey & 0xffffff00) | newkey;
 }
+*/
 
 /**
  * ib_alloc_mw - Allocates a memory window.
@@ -2245,21 +2318,23 @@ struct ib_mw *ib_alloc_mw(struct ib_pd *pd);
  * @mw_bind: Specifies information about the memory window, including
  *   its address range, remote access rights, and associated memory region.
  */
+/*
 static inline int ib_bind_mw(struct ib_qp *qp,
 			     struct ib_mw *mw,
 			     struct ib_mw_bind *mw_bind)
 {
-	/* XXX reference counting in corresponding MR? */
+	// XXX reference counting in corresponding MR?
 	return mw->device->bind_mw ?
 		mw->device->bind_mw(qp, mw, mw_bind) :
 		-ENOSYS;
 }
+*/
 
 /**
  * ib_dealloc_mw - Deallocates a memory window.
  * @mw: The memory window to deallocate.
  */
-int ib_dealloc_mw(struct ib_mw *mw);
+//int ib_dealloc_mw(struct ib_mw *mw);
 
 /**
  * ib_alloc_fmr - Allocates a unmapped fast memory region.
@@ -2270,9 +2345,11 @@ int ib_dealloc_mw(struct ib_mw *mw);
  * A fast memory region must be mapped before it can be used as part of
  * a work request.
  */
+/*
 struct ib_fmr *ib_alloc_fmr(struct ib_pd *pd,
 			    int mr_access_flags,
 			    struct ib_fmr_attr *fmr_attr);
+*/
 
 /**
  * ib_map_phys_fmr - Maps a list of physical pages to a fast memory region.
@@ -2281,24 +2358,26 @@ struct ib_fmr *ib_alloc_fmr(struct ib_pd *pd,
  * @list_len: The number of pages in page_list.
  * @iova: The I/O virtual address to use with the mapped region.
  */
+/*
 static inline int ib_map_phys_fmr(struct ib_fmr *fmr,
 				  u64 *page_list, int list_len,
 				  u64 iova)
 {
 	return fmr->device->map_phys_fmr(fmr, page_list, list_len, iova);
 }
+*/
 
 /**
  * ib_unmap_fmr - Removes the mapping from a list of fast memory regions.
  * @fmr_list: A linked list of fast memory regions to unmap.
  */
-int ib_unmap_fmr(struct list_head *fmr_list);
+//int ib_unmap_fmr(struct list_head *fmr_list);
 
 /**
  * ib_dealloc_fmr - Deallocates a fast memory region.
  * @fmr: The fast memory region to deallocate.
  */
-int ib_dealloc_fmr(struct ib_fmr *fmr);
+//int ib_dealloc_fmr(struct ib_fmr *fmr);
 
 /**
  * ib_attach_mcast - Attaches the specified QP to a multicast group.
@@ -2326,15 +2405,16 @@ int ib_detach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid);
  * ib_alloc_xrcd - Allocates an XRC domain.
  * @device: The device on which to allocate the XRC domain.
  */
-struct ib_xrcd *ib_alloc_xrcd(struct ib_device *device);
+//struct ib_xrcd *ib_alloc_xrcd(struct ib_device *device);
 
 /**
  * ib_dealloc_xrcd - Deallocates an XRC domain.
  * @xrcd: The XRC domain to deallocate.
  */
-int ib_dealloc_xrcd(struct ib_xrcd *xrcd);
+//int ib_dealloc_xrcd(struct ib_xrcd *xrcd);
 
-int ib_attach_flow(struct ib_qp *qp, struct ib_flow_spec *spec, int priority);
-int ib_detach_flow(struct ib_qp *qp, struct ib_flow_spec *spec, int priority);
+//int ib_attach_flow(struct ib_qp *qp, struct ib_flow_spec *spec, int priority);
+
+//int ib_detach_flow(struct ib_qp *qp, struct ib_flow_spec *spec, int priority);
 
 #endif /* IB_VERBS_H */
