@@ -598,11 +598,7 @@ bsd += bsd/sys/xdr/xdr_mem.o
 bsd += bsd/sys/xen/evtchn.o
 
 # virtual RDMA kernel drivers
-INCLUDES += -isystem bsd/sys/ofed/include
-INCLUDES += -isystem bsd/include
-INCLUDES += -isystem bsd/sys
-INCLUDES += -isystem include/glibc-compat
-INCLUDES += -isystem include
+$(out)/bsd/sys/ofed/%.o: INCLUDES += -isystem bsd/sys/ofed/include
 bsd += bsd/sys/ofed/drivers/infiniband/core/verbs.o
 bsd += bsd/sys/ofed/drivers/infiniband/core/device.o
 
