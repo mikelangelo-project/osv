@@ -47,12 +47,6 @@
 #define ARRAY_SIZE(a) (sizeof (a) / sizeof ((a)[0]))
 
 // ofed/include/asm/biteorder.h
-#if BYTE_ORDER == LITTLE_ENDIAN
-#define __LITTLE_ENDIAN
-#else
-#define __BIG_ENDIAN
-#endif
-
 #define cpu_to_le64     htole64
 #define le64_to_cpu     le64toh
 #define cpu_to_le32     htole32
@@ -84,9 +78,5 @@
 #define free_page(ptr)              free(ptr)
 
 #define __be16_to_cpu   be16toh
-
-
-// ofed/include/linux/page.h
-#define page    vm_page
 
 #endif /*_LINUX_PORTING_H*/
