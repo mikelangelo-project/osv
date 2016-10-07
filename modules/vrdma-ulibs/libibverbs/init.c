@@ -79,131 +79,39 @@ static struct ibv_driver *head_driver, *tail_driver;
 
 static int find_sysfs_devs(void)
 {
-#ifdef __linux__
-	char class_path[IBV_SYSFS_PATH_MAX];
-	DIR *class_dir;
-	struct dirent *dent;
 	struct ibv_sysfs_dev *sysfs_dev = NULL;
 	char value[8];
 	int ret = 0;
 
-	snprintf(class_path, sizeof class_path, "%s/class/infiniband_verbs",
-		 ibv_get_sysfs_path());
-
-	class_dir = opendir(class_path);
-	if (!class_dir)
-		return ENOSYS;
-
-	while ((dent = readdir(class_dir))) {
-		struct stat buf;
-
-		if (dent->d_name[0] == '.')
-			continue;
-
-		if (!sysfs_dev)
-			sysfs_dev = malloc(sizeof *sysfs_dev);
-		if (!sysfs_dev) {
-			ret = ENOMEM;
-			goto out;
-		}
-
-		snprintf(sysfs_dev->sysfs_path, sizeof sysfs_dev->sysfs_path,
-			 "%s/%s", class_path, dent->d_name);
-
-		if (stat(sysfs_dev->sysfs_path, &buf)) {
-			fprintf(stderr, PFX "Warning: couldn't stat '%s'.\n",
-				sysfs_dev->sysfs_path);
-			continue;
-		}
-
-		if (!S_ISDIR(buf.st_mode))
-			continue;
-
-		snprintf(sysfs_dev->sysfs_name, sizeof sysfs_dev->sysfs_name,
-			"%s", dent->d_name);
-
-		if (ibv_read_sysfs_file(sysfs_dev->sysfs_path, "ibdev",
-					sysfs_dev->ibdev_name,
-					sizeof sysfs_dev->ibdev_name) < 0) {
-			fprintf(stderr, PFX "Warning: no ibdev class attr for '%s'.\n",
-				dent->d_name);
-			continue;
-		}
-
-		snprintf(sysfs_dev->ibdev_path, sizeof sysfs_dev->ibdev_path,
-			 "%s/class/infiniband/%s", ibv_get_sysfs_path(),
-			 sysfs_dev->ibdev_name);
-
-		sysfs_dev->next        = sysfs_dev_list;
-		sysfs_dev->have_driver = 0;
-		if (ibv_read_sysfs_file(sysfs_dev->sysfs_path, "abi_version",
-					value, sizeof value) > 0)
-			sysfs_dev->abi_ver = strtol(value, NULL, 10);
-		else
-			sysfs_dev->abi_ver = 0;
-
-		sysfs_dev_list = sysfs_dev;
-		sysfs_dev      = NULL;
+	if (!sysfs_dev)
+		sysfs_dev = malloc(sizeof *sysfs_dev);
+	if (!sysfs_dev) {
+		ret = ENOMEM;
+		goto out;
 	}
 
- out:
-	if (sysfs_dev)
-		free(sysfs_dev);
-
-	closedir(class_dir);
-	return ret;
-#else
-	char class_path[IBV_SYSFS_PATH_MAX];
-	struct ibv_sysfs_dev *sysfs_dev = NULL;
-	char value[8];
-	int ret = 0;
-	int i;
-
-	snprintf(class_path, sizeof class_path, "%s/class/infiniband_verbs",
-		 ibv_get_sysfs_path());
-
-	for (i = 0; i < 256; i++) {
-		if (!sysfs_dev)
-			sysfs_dev = malloc(sizeof *sysfs_dev);
-		if (!sysfs_dev) {
-			ret = ENOMEM;
-			goto out;
-		}
-
-		snprintf(sysfs_dev->sysfs_path, sizeof sysfs_dev->sysfs_path,
-			 "%s/uverbs%d", class_path, i);
-
-		snprintf(sysfs_dev->sysfs_name, sizeof sysfs_dev->sysfs_name,
-			"uverbs%d", i);
-
-		if (ibv_read_sysfs_file(sysfs_dev->sysfs_path, "ibdev",
-					sysfs_dev->ibdev_name,
-					sizeof sysfs_dev->ibdev_name) < 0)
-			continue;
-
-		snprintf(sysfs_dev->ibdev_path, sizeof sysfs_dev->ibdev_path,
-			 "%s/class/infiniband/%s", ibv_get_sysfs_path(),
-			 sysfs_dev->ibdev_name);
-
-		sysfs_dev->next        = sysfs_dev_list;
-		sysfs_dev->have_driver = 0;
-		if (ibv_read_sysfs_file(sysfs_dev->sysfs_path, "abi_version",
-					value, sizeof value) > 0)
-			sysfs_dev->abi_ver = strtol(value, NULL, 10);
-		else
-			sysfs_dev->abi_ver = 0;
-
-		sysfs_dev_list = sysfs_dev;
-		sysfs_dev      = NULL;
+	if (read_vrdma_config("ibdev", sysfs_dev->ibdev_name) < 0) {
+		fprintf(stderr, PFX "Warning: no ibdev class attr for '%s'.\n",
+			sysfs_dev->ibdev_name);
+		goto out;
 	}
+
+	sysfs_dev->next        = sysfs_dev_list;
+	sysfs_dev->have_driver = 0;
+	if (read_vrdma_config("uverbs_abi_version", value) > 0) {
+		sysfs_dev->abi_ver = strtol(value, NULL, 10);
+	}
+	else
+		sysfs_dev->abi_ver = 0;
+
+	sysfs_dev_list = sysfs_dev;
+	sysfs_dev      = NULL;
 
  out:
 	if (sysfs_dev)
 		free(sysfs_dev);
 
 	return ret;
-	
-#endif
 }
 
 void ibv_register_driver(const char *name, ibv_driver_init_func init_func)
@@ -287,20 +195,24 @@ static void load_drivers(void)
 	}
 }
 
-static void read_config_file(const char *path)
+int read_vrdma_config(const char *key, char *buf)
 {
+	size_t len;
 	FILE *conf;
 	char *line = NULL;
 	char *config;
 	char *field;
 	size_t buflen = 0;
-	ssize_t len;
+	char file[64];
 
-	conf = fopen(path, "r");
+    snprintf(file, sizeof file,
+             "%s/%s", ibv_get_sysfs_path(), "vrdma.config");
+
+	conf = fopen(file, "r");
 	if (!conf) {
 		fprintf(stderr, PFX "Warning: couldn't read config file %s.\n",
-			path);
-		return;
+				file);
+		return -1;
 	}
 
 	while ((len = getline(&line, &buflen, conf)) != -1) {
@@ -310,76 +222,52 @@ static void read_config_file(const char *path)
 
 		field = strsep(&config, "\n\t ");
 
-		if (strcmp(field, "driver") == 0) {
-			struct ibv_driver_name *driver_name;
+        if (strcmp(field, key) == 0) {
+			strcpy(buf, config);
+			len = strlen(buf);
 
-			config += strspn(config, "\t ");
-			field = strsep(&config, "\n\t ");
-
-			driver_name = malloc(sizeof *driver_name);
-			if (!driver_name) {
-				fprintf(stderr, PFX "Warning: couldn't allocate "
-					"driver name '%s'.\n", field);
-				continue;
-			}
-
-			driver_name->name = strdup(field);
-			if (!driver_name->name) {
-				fprintf(stderr, PFX "Warning: couldn't allocate "
-					"driver name '%s'.\n", field);
-				free(driver_name);
-				continue;
-			}
-
-			driver_name->next = driver_name_list;
-			driver_name_list  = driver_name;
-		} else
-			fprintf(stderr, PFX "Warning: ignoring bad config directive "
-				"'%s' in file '%s'.\n", field, path);
+			goto out;
+		}
 	}
 
-	if (line)
-		free(line);
-	fclose(conf);
+out:
+	if (len > 0 && buf[len - 1] == '\n')
+		buf[--len] = '\0';
+
+	return len;
+}
+
+int ibv_read_sysfs_file(const char *dir, const char *file,
+			char *buf, size_t size)
+{
+	return read_vrdma_config(file, buf);
 }
 
 static void read_config(void)
 {
-	DIR *conf_dir;
-	struct dirent *dent;
-	char *path;
+	char field[64];
+	struct ibv_driver_name *driver_name;
 
-	conf_dir = opendir(IBV_CONFIG_DIR);
-	if (!conf_dir) {
-		fprintf(stderr, PFX "Warning: couldn't open config directory '%s'.\n",
-			IBV_CONFIG_DIR);
+	read_vrdma_config("driver", field);
+
+	driver_name = malloc(sizeof *driver_name);
+	if (!driver_name) {
+		fprintf(stderr, PFX "Warning: couldn't allocate "
+			"driver name '%s'.\n", field);
 		return;
 	}
 
-	while ((dent = readdir(conf_dir))) {
-		struct stat buf;
+	driver_name->name = strdup(field);
 
-		if (asprintf(&path, "%s/%s", IBV_CONFIG_DIR, dent->d_name) < 0) {
-			fprintf(stderr, PFX "Warning: couldn't read config file %s/%s.\n",
-				IBV_CONFIG_DIR, dent->d_name);
-			return;
-		}
-
-		if (stat(path, &buf)) {
-			fprintf(stderr, PFX "Warning: couldn't stat config file '%s'.\n",
-				path);
-			goto next;
-		}
-
-		if (!S_ISREG(buf.st_mode))
-			goto next;
-
-		read_config_file(path);
-next:
-		free(path);
+	if (!driver_name->name) {
+		fprintf(stderr, PFX "Warning: couldn't allocate "
+			"driver name '%s'.\n", field);
+		free(driver_name);
+		return;
 	}
 
-	closedir(conf_dir);
+	driver_name->next = driver_name_list;
+	driver_name_list  = driver_name;
 }
 
 static struct ibv_device *try_driver(struct ibv_driver *driver,
@@ -392,16 +280,16 @@ static struct ibv_device *try_driver(struct ibv_driver *driver,
 	if (!dev)
 		return NULL;
 
-	if (ibv_read_sysfs_file(sysfs_dev->ibdev_path, "node_type", value, sizeof value) < 0) {
+	if (read_vrdma_config("node_type", value) < 0) {
 		fprintf(stderr, PFX "Warning: no node_type attr under %s.\n",
 			sysfs_dev->ibdev_path);
 			dev->node_type = IBV_NODE_UNKNOWN;
 	} else {
 		dev->node_type = strtol(value, NULL, 10);
-		if (dev->node_type < IBV_NODE_CA || dev->node_type > IBV_NODE_RNIC)
+		if (dev->node_type < IBV_NODE_CA || dev->node_type > IBV_NODE_RNIC) {
 			dev->node_type = IBV_NODE_UNKNOWN;
+		}
 	}
-out:
 
 	switch (dev->node_type) {
 	case IBV_NODE_CA:
@@ -443,12 +331,11 @@ static int check_abi_version(const char *path)
 {
 	char value[8];
 
-	if (ibv_read_sysfs_file(path, "class/infiniband_verbs/abi_version",
-				value, sizeof value) < 0) {
-		return ENOSYS;
+	if (read_vrdma_config("kernel_abi_version", value) > 0) {
+		abi_ver = strtol(value, NULL, 10);
 	}
-
-	abi_ver = strtol(value, NULL, 10);
+	else
+		abi_ver = 0;
 
 	if (abi_ver < IB_USER_VERBS_MIN_ABI_VERSION ||
 	    abi_ver > IB_USER_VERBS_MAX_ABI_VERSION) {
@@ -492,6 +379,7 @@ static void add_device(struct ibv_device *dev,
 		if (!new_list)
 			return;
 		*dev_list = new_list;
+
 	}
 
 	(*dev_list)[(*num_devices)++] = dev;
@@ -515,36 +403,28 @@ HIDDEN int ibverbs_init(struct ibv_device ***list)
 			fprintf(stderr, PFX "Warning: fork()-safety requested "
 				"but init failed\n");
 
-	printf("111111111");
-
 	sysfs_path = ibv_get_sysfs_path();
 	if (!sysfs_path)
 		return -ENOSYS;
 
-	printf("2222222222");
 	ret = check_abi_version(sysfs_path);
 	if (ret)
 		return -ret;
 
 	check_memlock_limit();
 
-	printf("33333333333");
 	read_config();
 
-	printf("44444444444");
 	ret = find_sysfs_devs();
 	if (ret)
 		return -ret;
 
-	printf("55555555555");
 	for (sysfs_dev = sysfs_dev_list; sysfs_dev; sysfs_dev = sysfs_dev->next) {
 		device = try_drivers(sysfs_dev);
 		if (device) {
-	printf("666666666666");
 			add_device(device, list, &num_devices, &list_size);
 			sysfs_dev->have_driver = 1;
 		} else
-	printf("777777777777");
 			no_driver = 1;
 	}
 
@@ -571,17 +451,14 @@ HIDDEN int ibverbs_init(struct ibv_device ***list)
 		dlclose(hand);
 	}
 
-	printf("8888888888888");
 	load_drivers();
 
 	for (sysfs_dev = sysfs_dev_list; sysfs_dev; sysfs_dev = sysfs_dev->next) {
 		if (sysfs_dev->have_driver)
 			continue;
 
-	printf("99999999999");
 		device = try_drivers(sysfs_dev);
 		if (device) {
-	printf("!!!!!!!!!!!!!");
 			add_device(device, list, &num_devices, &list_size);
 			sysfs_dev->have_driver = 1;
 		}
