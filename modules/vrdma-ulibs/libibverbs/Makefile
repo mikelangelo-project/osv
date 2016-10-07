@@ -16,7 +16,7 @@ $(MAIN): $(SRCS)
 	ln -s -f ./libibverbs.so.1.0.0 ./libibverbs.so
 
 $(DEVINFO): $(DEVINFO_SRC)
-	$(CC) -DOSV_CLI $(CFLAGS) $(INCLUDES) $(LINK) -fPIC -o $@ $(DEVINFO_SRCS) $(LFLAGS) $(LIBS) -pthread -libverbs -ldl
+	$(CC) -DOSV_CLI $(CFLAGS) $(INCLUDES) $(LINK) -fPIC -shared -o $@ $(DEVINFO_SRCS) $(LFLAGS) $(LIBS) -pthread -libverbs -ldl
 
 clean:
 	rm -f $(MAIN) $(DEVINFO) ./libibverbs.so
