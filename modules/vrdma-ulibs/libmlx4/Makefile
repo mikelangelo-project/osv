@@ -13,13 +13,12 @@ $(MAIN): $(SRCS)
 clean:
 	rm -f $(MAIN)
 install:
-	cp libmlx4-rdmav2.so /usr/lib/libmlx4-rdmav2.so
-	ln -s -f /usr/lib/libmlx4-rdmav2.so /usr/lib/libmlx4.so
+	cp libmlx4-rdmav2.so /usr/lib/libibverbs/libmlx4-rdmav2.so
 	mkdir -p /usr/etc/libibverbs.d
 	cp mlx4.driver /usr/etc/libibverbs.d
 	chmod 644 /usr/etc/libibverbs.d/mlx4.driver
 
 uninstall:
-	rm -f /usr/etc/libibverbs.d/mlx4.driver /usr/lib/libmlx4-rdmav2.so /usr/lib/libmlx4.so
+	rm -f /usr/etc/libibverbs.d/mlx4.driver /usr/lib/libibverbs/libmlx4-rdmav2.so
 
 .PHONY: module clean install uninstall
