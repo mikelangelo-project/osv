@@ -21,6 +21,6 @@ install:
 	mkdir -p /usr/include/rdma
 	cp ./include/rdma/* /usr/include/rdma
 uninstall:
-	rm -f /usr/lib/$(MAIN) /usr/lib/libibverbs.so.1 /usr/lib/libibverbs.so
+	rm -f /usr/lib/$(MAIN) /usr/lib/librdmacm.so.1 /usr/lib/librdmacm.so
 
 .PHONY: module clean install uninstall
