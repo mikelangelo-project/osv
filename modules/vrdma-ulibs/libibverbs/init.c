@@ -237,12 +237,6 @@ out:
 	return len;
 }
 
-int ibv_read_sysfs_file(const char *dir, const char *file,
-			char *buf, size_t size)
-{
-	return read_vrdma_config(file, buf);
-}
-
 static void read_config(void)
 {
 	char field[64];

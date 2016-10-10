@@ -80,26 +80,5 @@ const char *ibv_get_sysfs_path(void)
 int ibv_read_sysfs_file(const char *dir, const char *file,
 			char *buf, size_t size)
 {
-	char *path, *s;
-	int fd;
-	size_t len;
-
-	if (asprintf(&path, "%s/%s", dir, file) < 0)
-		return -1;
-
-	for (s = &path[0]; *s != '\0'; s++)
-		if (*s == '/')
-			*s = '.';
-
-        len = size;
-		// Shiqing:	does OSv have the same permission level as FreeBSD?
-        /* if (sysctlbyname(&path[1], buf, &len, NULL, 0) == -1) */
-		/* return -1; */
-
-	free(path);
-
-	if (len > 0 && buf[len - 1] == '\n')
-		buf[--len] = '\0';
-
-	return len;
+	return read_vrdma_config(file, buf);
 }
