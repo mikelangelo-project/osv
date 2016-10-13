@@ -35,7 +35,6 @@
 #include <sys/systm.h>
 #include <osv/compiler.h>
 #include <osv/types.h>
-#include <asm/types.h>
 #include <porting/mmu.h>
 
 #ifndef __bitwise__
@@ -55,7 +54,8 @@ typedef uint64_t __be64;
 
 typedef unsigned int    uint;
 typedef unsigned gfp_t;
-typedef uint64_t loff_t;
+// use the definition from OSv
+//typedef uint64_t loff_t;
 typedef vm_paddr_t resource_size_t;
 
 typedef u64 phys_addr_t;

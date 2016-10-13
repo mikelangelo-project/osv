@@ -40,6 +40,8 @@
 
 #define BITS_PER_BYTE           8
 
+#define min(a, b) ((a) < (b) ? (a) : (b))
+
 int
 flsl(long mask)
 {

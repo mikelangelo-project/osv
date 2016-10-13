@@ -42,12 +42,10 @@
 #include <linux/types.h>
 #include <osv/device.h>
 #include <linux/dma-mapping.h>
-#include <porting/sync_stub.h>
 #include <porting/netport.h>
 #include <linux/rwsem.h>
 #include <linux/scatterlist.h>
 #include <errno.h>
-#include <osv/rwlock.h>
 #include <asm/uaccess.h>
 #include <linux/rbtree.h>
 #include <asm/atomic.h>

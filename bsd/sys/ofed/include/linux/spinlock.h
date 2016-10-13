@@ -30,12 +30,10 @@
 #define	_LINUX_SPINLOCK_H_
 
 #include <sys/param.h>
-#include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
 
 #include <linux/compiler.h>
-#include <osv/rwlock.h>
 
 typedef struct {
 	struct mtx m;

@@ -36,7 +36,7 @@
 #ifndef IB_USER_VERBS_H
 #define IB_USER_VERBS_H
 
-#include <linux/types.h>
+#include <infiniband/types.h>
 
 /*
  * Increment this value if any changes that break userspace ABI
