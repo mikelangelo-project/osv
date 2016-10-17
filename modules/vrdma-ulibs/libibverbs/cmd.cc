@@ -56,13 +56,13 @@ static int ibv_cmd_get_context_v2(struct ibv_context *context,
 	size_t cmd_size;
 	uint32_t cq_fd;
 
-	t = malloc(sizeof *t);
+	t = (struct ibv_abi_compat_v2 *) malloc(sizeof *t);
 	if (!t)
 		return ENOMEM;
 	pthread_mutex_init(&t->in_use, NULL);
 
 	cmd_size = sizeof *cmd + new_cmd_size - sizeof *new_cmd;
-	cmd      = alloca(cmd_size);
+	cmd      = (struct ibv_get_context_v2 *) alloca(cmd_size);
 	memcpy(cmd->driver_data, new_cmd->driver_data, new_cmd_size - sizeof *new_cmd);
 
 	IBV_INIT_CMD_RESP(cmd, cmd_size, GET_CONTEXT, resp, resp_size);
@@ -140,7 +140,7 @@ int ibv_cmd_query_device(struct ibv_context *context,
 	device_attr->max_res_rd_atom 	       = resp.max_res_rd_atom;
 	device_attr->max_qp_init_rd_atom       = resp.max_qp_init_rd_atom;
 	device_attr->max_ee_init_rd_atom       = resp.max_ee_init_rd_atom;
-	device_attr->atomic_cap 	       = resp.atomic_cap;
+	device_attr->atomic_cap 	       = (ibv_atomic_cap) resp.atomic_cap;
 	device_attr->max_ee 		       = resp.max_ee;
 	device_attr->max_rdd 		       = resp.max_rdd;
 	device_attr->max_mw 		       = resp.max_mw;
@@ -177,9 +177,9 @@ int ibv_cmd_query_port(struct ibv_context *context, uint8_t port_num,
 
 	VALGRIND_MAKE_MEM_DEFINED(&resp, sizeof resp);
 
-	port_attr->state      	   = resp.state;
-	port_attr->max_mtu         = resp.max_mtu;
-	port_attr->active_mtu      = resp.active_mtu;
+	port_attr->state      	   = (ibv_port_state) resp.state;
+	port_attr->max_mtu         = (ibv_mtu) resp.max_mtu;
+	port_attr->active_mtu      = (ibv_mtu) resp.active_mtu;
 	port_attr->gid_tbl_len     = resp.gid_tbl_len;
 	port_attr->port_cap_flags  = resp.port_cap_flags;
 	port_attr->max_msg_sz      = resp.max_msg_sz;
@@ -281,7 +281,7 @@ static int ibv_cmd_create_cq_v2(struct ibv_context *context, int cqe,
 	size_t cmd_size;
 
 	cmd_size = sizeof *cmd + new_cmd_size - sizeof *new_cmd;
-	cmd      = alloca(cmd_size);
+	cmd      = (struct ibv_create_cq_v2 *) alloca(cmd_size);
 	memcpy(cmd->driver_data, new_cmd->driver_data, new_cmd_size - sizeof *new_cmd);
 
 	IBV_INIT_CMD_RESP(cmd, cmd_size, CREATE_CQ, resp, resp_size);
@@ -339,7 +339,7 @@ int ibv_cmd_poll_cq(struct ibv_cq *ibcq, int ne, struct ibv_wc *wc)
 	int                      ret;
 
 	rsize = sizeof *resp + ne * sizeof(struct ibv_kern_wc);
-	resp  = malloc(rsize);
+	resp  = (struct ibv_poll_cq_resp *) malloc(rsize);
 	if (!resp)
 		return -1;
 
@@ -356,8 +356,8 @@ int ibv_cmd_poll_cq(struct ibv_cq *ibcq, int ne, struct ibv_wc *wc)
 
 	for (i = 0; i < resp->count; i++) {
 		wc[i].wr_id 	     = resp->wc[i].wr_id;
-		wc[i].status 	     = resp->wc[i].status;
-		wc[i].opcode 	     = resp->wc[i].opcode;
+		wc[i].status 	     = (ibv_wc_status) resp->wc[i].status;
+		wc[i].opcode 	     = (ibv_wc_opcode) resp->wc[i].opcode;
 		wc[i].vendor_err     = resp->wc[i].vendor_err;
 		wc[i].byte_len 	     = resp->wc[i].byte_len;
 		wc[i].imm_data 	     = resp->wc[i].imm_data;
@@ -522,7 +522,7 @@ static int ibv_cmd_modify_srq_v3(struct ibv_srq *srq,
 	size_t cmd_size;
 
 	cmd_size = sizeof *cmd + new_cmd_size - sizeof *new_cmd;
-	cmd      = alloca(cmd_size);
+	cmd      = (ibv_modify_srq_v3*) alloca(cmd_size);
 	memcpy(cmd->driver_data, new_cmd->driver_data, new_cmd_size - sizeof *new_cmd);
 
 	IBV_INIT_CMD(cmd, cmd_size, MODIFY_SRQ);
@@ -704,10 +704,10 @@ int ibv_cmd_query_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
 	attr->qp_access_flags               = resp.qp_access_flags;
 	attr->pkey_index                    = resp.pkey_index;
 	attr->alt_pkey_index                = resp.alt_pkey_index;
-	attr->qp_state                      = resp.qp_state;
-	attr->cur_qp_state                  = resp.cur_qp_state;
-	attr->path_mtu                      = resp.path_mtu;
-	attr->path_mig_state                = resp.path_mig_state;
+	attr->qp_state                      = (ibv_qp_state) resp.qp_state;
+	attr->cur_qp_state                  = (ibv_qp_state) resp.cur_qp_state;
+	attr->path_mtu                      = (ibv_mtu) resp.path_mtu;
+	attr->path_mig_state                = (ibv_mig_state) resp.path_mig_state;
 	attr->sq_draining                   = resp.sq_draining;
 	attr->max_rd_atomic                 = resp.max_rd_atomic;
 	attr->max_dest_rd_atomic            = resp.max_dest_rd_atomic;
@@ -957,10 +957,10 @@ int ibv_cmd_query_xrc_rcv_qp(struct ibv_xrc_domain *d, uint32_t xrc_qp_num,
 	attr->qp_access_flags               = resp.qp_access_flags;
 	attr->pkey_index                    = resp.pkey_index;
 	attr->alt_pkey_index                = resp.alt_pkey_index;
-	attr->qp_state                      = resp.qp_state;
-	attr->cur_qp_state                  = resp.cur_qp_state;
-	attr->path_mtu                      = resp.path_mtu;
-	attr->path_mig_state                = resp.path_mig_state;
+	attr->qp_state                      = (ibv_qp_state) resp.qp_state;
+	attr->cur_qp_state                  = (ibv_qp_state) resp.cur_qp_state;
+	attr->path_mtu                      = (ibv_mtu) resp.path_mtu;
+	attr->path_mig_state                = (ibv_mig_state) resp.path_mig_state;
 	attr->sq_draining                   = resp.sq_draining;
 	attr->max_rd_atomic                 = resp.max_rd_atomic;
 	attr->max_dest_rd_atomic            = resp.max_dest_rd_atomic;
@@ -1043,7 +1043,7 @@ int ibv_cmd_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 	}
 
 	cmd_size = sizeof *cmd + wr_count * sizeof *n + sge_count * sizeof *s;
-	cmd  = alloca(cmd_size);
+	cmd  = (struct ibv_post_send*) alloca(cmd_size);
 
 	IBV_INIT_CMD_RESP(cmd, cmd_size, POST_SEND, &resp, sizeof resp);
 	cmd->qp_handle = ibqp->handle;
@@ -1133,7 +1133,7 @@ int ibv_cmd_post_recv(struct ibv_qp *ibqp, struct ibv_recv_wr *wr,
 	}
 
 	cmd_size = sizeof *cmd + wr_count * sizeof *n + sge_count * sizeof *s;
-	cmd  = alloca(cmd_size);
+	cmd  = (struct ibv_post_recv*) alloca(cmd_size);
 
 	IBV_INIT_CMD_RESP(cmd, cmd_size, POST_RECV, &resp, sizeof resp);
 	cmd->qp_handle = ibqp->handle;
@@ -1194,7 +1194,7 @@ int ibv_cmd_post_srq_recv(struct ibv_srq *srq, struct ibv_recv_wr *wr,
 	}
 
 	cmd_size = sizeof *cmd + wr_count * sizeof *n + sge_count * sizeof *s;
-	cmd  = alloca(cmd_size);
+	cmd  = (struct ibv_post_srq_recv*) alloca(cmd_size);
 
 	IBV_INIT_CMD_RESP(cmd, cmd_size, POST_SRQ_RECV, &resp, sizeof resp);
 	cmd->srq_handle = srq->handle;
