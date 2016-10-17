@@ -1,25 +1,32 @@
 CC=gcc
-CFLAGS=-O2 -g -Wall -DIBV_CONFIG_DIR=\"/etc/libibverbs.d\" -std=gnu99 -DHAVE_CONFIG_H
-INCLUDES=-I./include -I./ -I../../include/glibc-compat/ -I../../bsd/sys/ -I../../../osv/build/release.x64/gen/include -I../../bsd/x64/ -I../../include/api/ -I../../include/api/x64/ -I../../
+CFLAGS=-O2 -g -Wall -DIBV_CONFIG_DIR=\"/etc/libibverbs.d\" -DHAVE_CONFIG_H -DCONF_debug_memory=0 -D_KERNEL
+INCLUDES=-I./include -I./ -I../../../ -I../../../arch/common -I../../../include/glibc-compat -I../../../include/api -I../../../bsd/sys -I../../../bsd -I../../../bsd/include -I../../../include -I../../../bsd/sys/ofed/include -I../../../build/release.x64/gen/include -I../../../include/api/x64/ -I../../../arch/x64/ -I../../../external/x64/misc.bin/usr/include/boost -I../../../bsd/x64 -I../../../build/debug.x64/gen/include
 
-LINK=-L./
+LFLAGS=-L./
 
-MAIN_SRCS=cmd.c compat-1_0.c device.c devinfo.c enum_strs.c init.c marshall.c memory.c sysfs.c verbs.c
+CPP_SRCS=cmd.cc virtio_hyv/virtio_hyv_hypercall.cc virtio_hyv/hyv_dev.cc
+CPP_O=cmd.o virtio_hyv_hypercall.o hyv_dev.o
+
+MAIN_SRCS=compat-1_0.c device.c enum_strs.c init.c marshall.c memory.c sysfs.c verbs.c
 MAIN=libibverbs.so.1.0.0
+
 DEVINFO_SRCS=devinfo.c
 DEVINFO=ibv_devinfo.so
 
-module: $(MAIN) $(DEVINFO)
+module: $(MAIN) $(DEVINFO) $(CPP_O)
 
-$(MAIN): $(SRCS)
-	$(CC) -DOSV_CLI $(CFLAGS) $(INCLUDES) -fPIC -shared -o $@ $(MAIN_SRCS) $(LFLAGS) $(LIBS) -ldl -pthread
+$(CPP_O): $(CPP_SRC)
+	$(CC) -DOSV_CLI $(CFLAGS) -fPIC -c -std=gnu++11 $(INCLUDES) $(CPP_SRCS)
+
+$(MAIN): $(MAIN_SRCS) $(CPP_O)
+	$(CC) -DOSV_CLI $(CFLAGS) -std=gnu99 $(INCLUDES) -fPIC -shared -o $@ $(MAIN_SRCS) $(CPP_O) -ldl -pthread
 	ln -s -f ./libibverbs.so.1.0.0 ./libibverbs.so
 
-$(DEVINFO): $(DEVINFO_SRC)
-	$(CC) -DOSV_CLI $(CFLAGS) $(INCLUDES) $(LINK) -fPIC -shared -o $@ $(DEVINFO_SRCS) $(LFLAGS) $(LIBS) -pthread -libverbs -ldl
+$(DEVINFO): $(DEVINFO_SRCS)
+	$(CC) -DOSV_CLI $(CFLAGS) -std=gnu99 $(INCLUDES) -fPIC -shared -o $@ $(DEVINFO_SRCS) $(LFLAGS) -pthread -libverbs -ldl
 
 clean:
-	rm -f $(MAIN) $(DEVINFO) ./libibverbs.so
+	rm -f $(MAIN) $(DEVINFO) $(CPP_O) ./libibverbs.so
 
 install:
 	cp ./libibverbs.so.1.0.0 /usr/lib/libibverbs.so.1.0.0

@@ -46,6 +46,8 @@
 #  define END_C_DECLS
 #endif /* __cplusplus */
 
+BEGIN_C_DECLS
+
 /*
  * Extension that low-level drivers should add to their .so filename
  * (probably via libtool "-release" option).  For example a low-level
@@ -168,5 +170,5 @@ int ibv_resolve_eth_gid(const struct ibv_pd *pd, uint8_t port_num,
 			union ibv_gid *dgid, uint8_t sgid_index,
 			uint8_t mac[], uint16_t *vlan, uint8_t *tagged,
 			uint8_t *is_mcast);
-
+END_C_DECLS
 #endif /* INFINIBAND_DRIVER_H */
