@@ -20,10 +20,7 @@
  *USA.
  */
 
-#include <linux/module.h>
-#include <linux/idr.h>
-
-#include "virtio_hyv_debug.h"
+#include "hypercall_debug.h"
 #include "virtio_hyv.h"
 
 #include <virtio_hyv_config.h>
@@ -31,9 +28,9 @@
 
 #include <hyv.h>
 
-static DEFINE_IDA(hyv_index_ida);
+// static DEFINE_IDA(hyv_index_ida);
 
-static int hyv_dev_match(struct device *dev, struct device_driver *drv)
+static int hyv_dev_match(struct device *dev, struct driver *drv)
 {
 	struct hyv_device *gdev = dev_to_hyv(dev);
 	struct hyv_driver *gdrv = drv_to_hyv(drv);
@@ -78,29 +75,29 @@ static int hyv_dev_remove(struct device *dev)
 	return 0;
 }
 
-static struct bus_type hyv_bus = { .name = "hyv",
-				   .match = hyv_dev_match,
-				   //		.dev_groups =
-				   // virtio_hyv_dev_groups,
-				   .probe = hyv_dev_probe,
-				   .remove = hyv_dev_remove, };
+// static struct bus_type hyv_bus = { .name = "hyv",
+// 				   .match = hyv_dev_match,
+// 				   //		.dev_groups =
+// 				   // virtio_hyv_dev_groups,
+// 				   .probe = hyv_dev_probe,
+// 				   .remove = hyv_dev_remove, };
 
 int register_hyv_driver(struct hyv_driver *drv)
 {
 	dprint(DBG_BUS, "\n");
 
-	drv->driver.bus = &hyv_bus;
-	return driver_register(&drv->driver);
+	// drv->driver.bus = &hyv_bus;
+	// return driver_register(&drv->driver);
 }
-EXPORT_SYMBOL(register_hyv_driver);
+//EXPORT_SYMBOL(register_hyv_driver);
 
 void unregister_hyv_driver(struct hyv_driver *drv)
 {
 	dprint(DBG_BUS, "\n");
 
-	driver_unregister(&drv->driver);
+	// driver_unregister(&drv->driver);
 }
-EXPORT_SYMBOL(unregister_hyv_driver);
+//EXPORT_SYMBOL(unregister_hyv_driver);
 
 static void hyv_release_dev(struct device *dev)
 {
@@ -109,8 +106,8 @@ static void hyv_release_dev(struct device *dev)
 
 	/* close device on host */
 	ret = hyv_put_ib_device(&gdev->vg->vq_hcall,
-				HYPERCALL_NOTIFY_HOST | HYPERCALL_SIGNAL_GUEST,
-				GFP_KERNEL, &hret, gdev->host_handle);
+							(hypercall_flags) (HYPERCALL_NOTIFY_HOST | HYPERCALL_SIGNAL_GUEST),
+							GFP_KERNEL, &hret, gdev->host_handle);
 	if (ret || hret) {
 		dprint(DBG_ON, "could not put device on host\n");
 	}
@@ -124,6 +121,7 @@ int register_hyv_device(struct virtio_hyv *vg, uint32_t host_handle)
 	int hret;
 	hyv_query_device_result attr;
 	struct hyv_device *dev;
+	char dev_name[8];
 
 	dprint(DBG_BUS, "\n");
 
@@ -135,24 +133,24 @@ int register_hyv_device(struct virtio_hyv *vg, uint32_t host_handle)
 	}
 	dev->vg = vg;
 	dev->host_handle = host_handle;
-	dev->dev.release = &hyv_release_dev;
+	// dev->dev.release = &hyv_release_dev;
 
 	/* open device on host */
 	ret = hyv_get_ib_device(&dev->vg->vq_hcall,
-				HYPERCALL_NOTIFY_HOST | HYPERCALL_SIGNAL_GUEST,
-				GFP_KERNEL, &hret, dev->host_handle);
+							(hypercall_flags) (HYPERCALL_NOTIFY_HOST | HYPERCALL_SIGNAL_GUEST),
+							GFP_KERNEL, &hret, dev->host_handle);
 	if (ret || hret) {
 		dprint(DBG_ON, "could not get device on host\n");
 		ret = ret ? ret : hret;
 		goto fail_alloc;
 	}
 
-	dev->dev.bus = &hyv_bus;
+	// dev->dev.bus = &hyv_bus;
 
 	/* query device */
 	ret = hyv_ibv_query_deviceX(
-	    &dev->vg->vq_hcall, HYPERCALL_NOTIFY_HOST | HYPERCALL_SIGNAL_GUEST,
-	    GFP_KERNEL, &hret, dev->host_handle, &attr, sizeof(attr));
+	    &dev->vg->vq_hcall, (hypercall_flags) (HYPERCALL_NOTIFY_HOST | HYPERCALL_SIGNAL_GUEST),
+	    GFP_KERNEL, &hret, (hypercall_flags) dev->host_handle, &attr, sizeof(attr));
 	if (ret || hret) {
 		dprint(DBG_ON, "could not query device on host\n");
 		ret = ret ? ret : hret;
@@ -167,27 +165,28 @@ int register_hyv_device(struct virtio_hyv *vg, uint32_t host_handle)
 	dev->id.vendor = attr.vendor_id;
 	dev->id.device = attr.vendor_part_id;
 
-	ret = ida_simple_get(&hyv_index_ida, 0, 0, GFP_KERNEL);
+	// ret = ida_simple_get(&hyv_index_ida, 0, 0, GFP_KERNEL);
 	if (ret < 0) {
 		dprint(DBG_ON, "assign unique index failed!\n");
 		goto fail_get;
 	}
 
 	dev->index = ret;
-	dev_set_name(&dev->dev, "hyv%d", dev->index);
+	// dev_set_name(&dev->dev, "hyv%d", dev->index);
+	sprintf(dev_name, "hyv%d", dev->index);
 
-	ret = device_register(&dev->dev);
-	if (ret) {
-		put_device(&dev->dev);
-		dprint(DBG_ON, "failed to register device!\n");
-		goto fail_get;
-	}
+    device_register(&dev->dev, dev_name, 0);
+	// if (ret) {
+	// 	// put_device(&dev->dev);
+	// 	dprint(DBG_ON, "failed to register device!\n");
+	// 	goto fail_get;
+	// }
 
 	return 0;
 fail_get:
 	ret = hyv_put_ib_device(&dev->vg->vq_hcall,
-				HYPERCALL_NOTIFY_HOST | HYPERCALL_SIGNAL_GUEST,
-				GFP_KERNEL, &hret, dev->host_handle);
+							(hypercall_flags) (HYPERCALL_NOTIFY_HOST | HYPERCALL_SIGNAL_GUEST),
+							GFP_KERNEL, &hret, (hypercall_flags) dev->host_handle);
 	if (ret || hret) {
 		dprint(DBG_ON, "could not put device on host\n");
 	}
@@ -203,27 +202,27 @@ void unregister_hyv_device(struct hyv_device *dev)
 
 	dprint(DBG_BUS, "\n");
 
-	device_unregister(&dev->dev);
-	ida_simple_remove(&hyv_index_ida, index);
+	// device_unregister(&dev->dev);
+	// ida_simple_remove(&hyv_index_ida, index);
 }
 
-int hyv_bus_for_each_dev(int (*cb)(struct device *, void *), void *data)
-{
-	return bus_for_each_dev(&hyv_bus, NULL, data, cb);
-}
+// int hyv_bus_for_each_dev(int (*cb)(struct device *, void *), void *data)
+// {
+// 	return bus_for_each_dev(&hyv_bus, NULL, data, cb);
+// }
 
 int hyv_bus_init(void)
 {
 	dprint(DBG_BUS, "\n");
-	if (bus_register(&hyv_bus)) {
-		dprint(DBG_ON, "bus registration failed!\n");
-	}
+	// if (bus_register(&hyv_bus)) {
+	// 	dprint(DBG_ON, "bus registration failed!\n");
+	// }
 	return 0;
 }
 
-void hyv_bus_exit(void)
-{
-	dprint(DBG_BUS, "\n");
-	/* unregister all devices */
-	bus_unregister(&hyv_bus);
-}
+// void hyv_bus_exit(void)
+// {
+// 	dprint(DBG_BUS, "\n");
+// 	/* unregister all devices */
+// 	bus_unregister(&hyv_bus);
+// }

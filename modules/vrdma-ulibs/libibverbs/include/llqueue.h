@@ -24,7 +24,6 @@
 #define LLQUEUE_H_
 
 #include <linux/types.h>
-#include <linux/kernel.h>
 #include <asm/atomic.h>
 
 /* This is a lock-free single-consumer/producer
@@ -34,8 +33,8 @@
 #define LLQUEUE(name, size, type, cache_bytes)                                 \
 	struct name                                                            \
 	{                                                                      \
-		atomic64_t front __attribute__((aligned(cache_bytes)));        \
-		atomic64_t back __attribute__((aligned(cache_bytes)));         \
+		atomic_t front __attribute__((aligned(cache_bytes)));        \
+		atomic_t back __attribute__((aligned(cache_bytes)));         \
 		type data[size];                                               \
 	}
 

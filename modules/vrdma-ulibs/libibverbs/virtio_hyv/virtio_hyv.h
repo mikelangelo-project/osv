@@ -23,9 +23,9 @@
 #ifndef _VIRTIO_HYV_H
 #define _VIRTIO_HYV_H
 
-#include <linux/virtio.h>
+#include <drivers/virtio.hh>
 #include <linux/types.h>
-#include <linux/list.h>
+#include <bsd/sys/cddl/contrib/opensolaris/uts/common/sys/list_impl.h>
 #include <linux/spinlock.h>
 
 #include <hypercall_guest.h>

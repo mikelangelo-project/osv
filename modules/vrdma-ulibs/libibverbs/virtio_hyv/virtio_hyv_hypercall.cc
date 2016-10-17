@@ -20,7 +20,7 @@
  *USA.
  */
 
-#include "virtio_hyv_debug.h"
+#include "hypercall_debug.h"
 
 #include <hypercall_guest.h>
 #include <hyv_hypercall.h>
@@ -87,6 +87,6 @@ DEF_HYPERCALL(VIRTIO_HYV_IBV_DEREG_MR, hyv_ibv_dereg_mrX, __s32, DEREG_MR_ARGS);
 DEF_HYPERCALL(VIRTIO_HYV_IBV_POST_SEND_NULL, hyv_ibv_post_send_nullX, __s32,
 	      POST_SEND_ARGS);
 
-DEF_HYPERCALL(VIRTIO_HYV_MMAP, hyv_mmap, hyv_mmap_result, MMAP_ARGS);
+// DEF_HYPERCALL(VIRTIO_HYV_MMAP, hyv_mmap, hyv_mmap_result, MMAP_ARGS);
 
-DEF_HYPERCALL(VIRTIO_HYV_MUNMAP, hyv_munmap, __s32, MUNMAP_ARGS);
+// DEF_HYPERCALL(VIRTIO_HYV_MUNMAP, hyv_munmap, __s32, MUNMAP_ARGS);

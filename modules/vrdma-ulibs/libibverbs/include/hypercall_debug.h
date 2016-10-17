@@ -23,9 +23,7 @@
 #ifndef _HYPERCALL_DEBUG_H
 #define _HYPERCALL_DEBUG_H
 
-#include <linux/kthread.h>
-#include <linux/uaccess.h>
-#include <linux/hardirq.h> /* in_interrupt() */
+#include <osv/debug.hh>
 
 /*
  * dprint: Selective debug printing
@@ -38,12 +36,20 @@
  * DBG_ON	    Always on, for really important events or error conditions
  * DBG_HOST	    Host
  * DBG_GUEST    Guest
+ * DBG_DEV  Device
+ * DBG_IBV  Verbs
+ * DBG_ATTR Attributes
+ * DBG_BUS      Bus events
  * DBG_ALL	    All categories above
  */
 #define DBG_ON 0x00000001
 #define DBG_HOST 0x00000002
 #define DBG_GUEST 0x00000004
-#define DBG_ALL (DBG_ON | DBG_HOST | DBG_GUEST)
+#define DBG_DEV 0x00000008
+#define DBG_IBV 0x00000010
+#define DBG_ATTR 0x00000020
+#define DBG_BUS 0x00000040
+#define DBG_ALL (DBG_ON | DBG_HOST | DBG_GUEST | DBG_DEV | DBG_IBV | DBG_ATTR | DBG_BUS)
 
 /*
  * Set DPRINT_MASK to tailor your debugging needs:
@@ -74,18 +80,13 @@
  * @args	: printf compliant argument list
  */
 #define dprint(dbgcat, fmt, args...)                                           \
-	do {                                                                   \
-		if ((dbgcat) & DPRINT_MASK) {                                  \
-			if (!in_interrupt())                                   \
-				pr_info("(%5d/%1d) %s " fmt, current->pid,     \
-					current_thread_info()->cpu, __func__,  \
-					##args);                               \
-			else                                                   \
-				pr_info("( irq /%1d) %s " fmt,                 \
-					current_thread_info()->cpu, __func__,  \
-					##args);                               \
-		}                                                              \
-	} while (0)
+    do {                                                                   \
+        if ((dbgcat) & DPRINT_MASK) {                                  \
+            debug("hypercall debug: %s " fmt,                 \
+            __func__,  \
+            ##args);                               \
+        }                                                              \
+    } while (0)
 
 #endif
 

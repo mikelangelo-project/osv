@@ -23,9 +23,8 @@
 #ifndef HYPERCALL_GUEST_H_
 #define HYPERCALL_GUEST_H_
 
-#include <linux/scatterlist.h>
+#include <infiniband/types.h>
 #include <linux/spinlock.h>
-
 #include <hypercall.h>
 
 #define ARG_PTR_DEF(a, b, c) , a b, uint32_t c
@@ -79,7 +78,7 @@ struct hypercall
 struct hypercall_sync
 {
 	struct hypercall base;
-	struct completion completion;
+//	struct completion completion;
 };
 
 struct hypercall_async
@@ -126,12 +125,12 @@ int do_hypercall_async(struct hypercall_vq *hvq,
 		int ret;                                                       \
 		const struct hypercall_parg pargs[] = { args(VOID,             \
 							     ARG_PTR_INIT) };  \
-		struct                                                         \
+		struct _args_t                                                        \
 		{                                                              \
 			struct name##_copy_args copy_args;                     \
 			struct name##_result result;                           \
 		} *_args;                                                      \
-		_args = kmalloc(sizeof(*_args), mem_flags);                    \
+		_args = (struct _args_t *) kmalloc(sizeof(*_args), mem_flags);                    \
 		if (!_args) {                                                  \
 			return -ENOMEM;                                        \
 		}                                                              \
@@ -155,7 +154,7 @@ int do_hypercall_async(struct hypercall_vq *hvq,
 		{                                                              \
 			args(VOID, ARG_PTR_VAR);                               \
 		} __attribute__((unused)) _args;                               \
-		name##_callback cb = hcall_async->cb;                          \
+		name##_callback cb = (name##_callback) hcall_async->cb;                          \
 		struct name##_result *result =                                 \
 		    (struct name##_result *)hcall_async->hret;                 \
 		args(VOID, ARG_PTR_ASSIGN2);                                   \
@@ -166,19 +165,19 @@ int do_hypercall_async(struct hypercall_vq *hvq,
 	{                                                                      \
 		int ret;                                                       \
 		uint32_t i = 0;                                                \
-		struct                                                         \
+		struct _args_t                                                         \
 		{                                                              \
 			struct hypercall_async hcall_async;                    \
 			struct name##_copy_args copy_args;                     \
 			struct name##_result result;                           \
 			struct hypercall_parg pargs[0 args(VOID, ARG_COUNT)];  \
 		} *_args;                                                      \
-		_args = kmalloc(sizeof(*_args), mem_flags);                    \
+		_args = (struct _args_t *) kmalloc(sizeof(*_args), mem_flags);                    \
 		if (!_args) {                                                  \
 			return -ENOMEM;                                        \
 		}                                                              \
 		_args->hcall_async.cbw = &name##_callback_wrapper;             \
-		_args->hcall_async.cb = cb;                                    \
+		_args->hcall_async.cb = (void *) cb;                                    \
 		_args->hcall_async.data = data;                                \
 		_args->hcall_async.hret = &_args->result.hdr;                  \
 		_args->hcall_async.pargs = _args->pargs;                       \

@@ -23,8 +23,8 @@
 #ifndef HYPERCALL_H_
 #define HYPERCALL_H_
 
-#include <linux/types.h>
-#include <linux/virtio.h>
+#include <infiniband/types.h>
+#include <drivers/virtio.hh>
 
 #define ARG_DEF(a, b) , a b
 #define ARG_VAR(a, b) a b;

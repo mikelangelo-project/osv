@@ -25,6 +25,7 @@
 
 #include <linux/types.h>
 #include <rdma/ib_verbs.h>
+#include <infiniband/verbs.h>
 
 struct hyv_device_id
 {
@@ -36,7 +37,7 @@ struct hyv_device;
 
 struct hyv_driver
 {
-	struct device_driver driver;
+	struct driver driver;
 	const struct hyv_device_id *id_table;
 	int (*probe)(struct hyv_device *dev);
 	int (*remove)(struct hyv_device *dev);
@@ -189,7 +190,7 @@ static inline struct hyv_device *ibdev_to_hyv(struct ib_device *ibdev)
 	return container_of(ibdev, struct hyv_device, ibdev);
 }
 
-static inline struct hyv_driver *drv_to_hyv(struct device_driver *drv)
+static inline struct hyv_driver *drv_to_hyv(struct driver *drv)
 {
 	return container_of(drv, struct hyv_driver, driver);
 }

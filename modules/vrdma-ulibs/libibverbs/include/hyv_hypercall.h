@@ -257,10 +257,10 @@ typedef struct
 static inline void copy_hyv_qp_attr_to_ib(const hyv_qp_attr *attr,
 					  struct ib_qp_attr *ibattr)
 {
-	ibattr->qp_state = attr->qp_state;
-	ibattr->cur_qp_state = attr->cur_qp_state;
-	ibattr->path_mtu = attr->path_mtu;
-	ibattr->path_mig_state = attr->path_mig_state;
+	ibattr->qp_state = (ib_qp_state) attr->qp_state;
+	ibattr->cur_qp_state = (ib_qp_state) attr->cur_qp_state;
+	ibattr->path_mtu = (ib_mtu)attr->path_mtu;
+	ibattr->path_mig_state = (ib_mig_state)attr->path_mig_state;
 	ibattr->qkey = attr->qkey;
 	ibattr->rq_psn = attr->rq_psn;
 	ibattr->sq_psn = attr->sq_psn;
@@ -383,13 +383,13 @@ typedef struct
 #define POST_SEND_ARGS(copy_arg, ptr_arg) copy_arg(__u32, qp_handle)
 DECL_HYPERCALL(hyv_ibv_post_send_nullX, __s32, POST_SEND_ARGS);
 
-#define MMAP_ARGS(copy_arg, ptr_arg)                                           \
-	copy_arg(__u32, uctx_handle) copy_arg(__u64, phys_addr)                \
-	    copy_arg(__u32, size) copy_arg(__u64, vm_flags)                    \
-	    copy_arg(__u64, vm_pgoff)
-DECL_HYPERCALL(hyv_mmap, hyv_mmap_result, MMAP_ARGS);
+/* #define MMAP_ARGS(copy_arg, ptr_arg)                                           \ */
+/* 	copy_arg(__u32, uctx_handle) copy_arg(__u64, phys_addr)                \ */
+/* 	    copy_arg(__u32, size) copy_arg(__u64, vm_flags)                    \ */
+/* 	    copy_arg(__u64, vm_pgoff) */
+/* DECL_HYPERCALL(hyv_mmap, hyv_mmap_result, MMAP_ARGS); */
 
-#define MUNMAP_ARGS(copy_arg, ptr_arg) copy_arg(__u32, mmap_handle)
-DECL_HYPERCALL(hyv_munmap, __s32, MUNMAP_ARGS);
+/* #define MUNMAP_ARGS(copy_arg, ptr_arg) copy_arg(__u32, mmap_handle) */
+/* DECL_HYPERCALL(hyv_munmap, __s32, MUNMAP_ARGS); */
 
 #endif /* HYV_HYPERCALL_H_ */
