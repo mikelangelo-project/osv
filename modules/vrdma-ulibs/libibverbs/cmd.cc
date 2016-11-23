@@ -44,7 +44,6 @@
 
 #include <infiniband/verbs.h>
 #include <rdma/ib_user_verbs.h>
-#include <infiniband/kern-abi.h>
 
 #include <drivers/virtio-rdma.hh>
 
