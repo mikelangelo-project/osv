@@ -412,7 +412,8 @@ enum ibv_qp_type {
 	IBV_QPT_UC,
 	IBV_QPT_UD,
 	IBV_QPT_XRC,
-	IBV_QPT_RAW_ETH = 8
+	IBV_QPT_RAW_ETH = 8,
+	IBV_QPT_RAW_PACKET=8
 };
 
 struct ibv_qp_cap {
