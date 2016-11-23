@@ -253,6 +253,7 @@ void arch_init_premain()
 #include "drivers/virtio-blk.hh"
 #include "drivers/virtio-scsi.hh"
 #include "drivers/virtio-net.hh"
+#include "drivers/virtio-rdma.hh"
 #include "drivers/virtio-assign.hh"
 #include "drivers/virtio-rng.hh"
 #include "drivers/xenplatform-pci.hh"
@@ -283,6 +284,8 @@ void arch_init_drivers()
     } else {
         drvman->register_driver(virtio::net::probe);
     }
+
+    drvman->register_driver(virtio::rdma::probe);
     drvman->register_driver(virtio::rng::probe);
     drvman->register_driver(xenfront::xenplatform_pci::probe);
     drvman->register_driver(virtio::ivshmem::probe);

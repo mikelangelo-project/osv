@@ -98,6 +98,7 @@ enum {
     VIRTIO_ID_SCSI    = 8,
     VIRTIO_ID_9P      = 9,
     VIRTIO_ID_RPROC_SERIAL = 11,
+    VIRTIO_ID_HYV     = 15,
 };
 
 #define VIRTIO_ALIGN(x) ((x + (VIRTIO_PCI_VRING_ALIGN-1)) & ~(VIRTIO_PCI_VRING_ALIGN-1))

@@ -801,6 +801,8 @@ drivers += drivers/pci-function.o
 drivers += drivers/pci-bridge.o
 drivers += drivers/driver.o
 
+$(out)/drivers/virtio-rdma.o: INCLUDES += -isystem bsd/sys/ofed/include
+$(out)/arch/$(arch)/arch-setup.o: INCLUDES += -isystem bsd/sys/ofed/include
 ifeq ($(arch),x64)
 drivers += $(libtsm)
 drivers += drivers/vga.o drivers/kbd.o drivers/isa-serial.o
@@ -808,6 +810,7 @@ drivers += arch/$(arch)/pvclock-abi.o
 drivers += drivers/virtio.o
 drivers += drivers/virtio-vring.o
 drivers += drivers/virtio-net.o
+drivers += drivers/virtio-rdma.o
 drivers += drivers/virtio-assign.o
 drivers += drivers/vmxnet3.o
 drivers += drivers/vmxnet3-queues.o
@@ -835,6 +838,7 @@ drivers += drivers/virtio-vring.o
 drivers += drivers/virtio-rng.o
 drivers += drivers/virtio-blk.o
 drivers += drivers/virtio-net.o
+drivers += drivers/virtio-rdma.o
 endif # aarch64
 
 objects += arch/$(arch)/arch-trace.o
