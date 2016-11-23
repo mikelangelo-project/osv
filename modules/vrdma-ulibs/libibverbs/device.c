@@ -125,21 +125,8 @@ default_symver(__ibv_get_device_guid, ibv_get_device_guid);
 struct ibv_context *__ibv_open_device(struct ibv_device *device)
 {
 	char *devpath;
-	int cmd_fd;
+	int cmd_fd = -1;
 	struct ibv_context *context;
-
-	if (asprintf(&devpath, "/dev/%s", device->dev_name) < 0)
-		return NULL;
-
-	/*
-	 * We'll only be doing writes, but we need O_RDWR in case the
-	 * provider needs to mmap() the file.
-	 */
-	cmd_fd = open(devpath, O_RDWR);
-	free(devpath);
-
-	if (cmd_fd < 0)
-		return NULL;
 
 	context = device->ops.alloc_context(device, cmd_fd);
 	if (!context)
