@@ -220,12 +220,6 @@ struct ibv_comp_channel *ibv_create_comp_channel(struct ibv_context *context)
 	if (!channel)
 		return NULL;
 
-	IBV_INIT_CMD_RESP(&cmd, sizeof cmd, CREATE_COMP_CHANNEL, &resp, sizeof resp);
-	if (write(context->cmd_fd, &cmd, sizeof cmd) != sizeof cmd) {
-		free(channel);
-		return NULL;
-	}
-
 	VALGRIND_MAKE_MEM_DEFINED(&resp, sizeof resp);
 
 	channel->context = context;
