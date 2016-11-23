@@ -81,25 +81,4 @@ extern HIDDEN int abi_ver;
 
 HIDDEN int ibverbs_init(struct ibv_device ***list);
 
-#define IBV_INIT_CMD(cmd, size, opcode)					\
-	do {								\
-		if (abi_ver > 2)					\
-			(cmd)->command = IB_USER_VERBS_CMD_##opcode;	\
-		else							\
-			(cmd)->command = IB_USER_VERBS_CMD_##opcode##_V2; \
-		(cmd)->in_words  = (size) / 4;				\
-		(cmd)->out_words = 0;					\
-	} while (0)
-
-#define IBV_INIT_CMD_RESP(cmd, size, opcode, out, outsize)		\
-	do {								\
-		if (abi_ver > 2)					\
-			(cmd)->command = IB_USER_VERBS_CMD_##opcode;	\
-		else							\
-			(cmd)->command = IB_USER_VERBS_CMD_##opcode##_V2; \
-		(cmd)->in_words  = (size) / 4;				\
-		(cmd)->out_words = (outsize) / 4;			\
-		(cmd)->response  = (uintptr_t) (out);			\
-	} while (0)
-
 #endif /* IB_VERBS_H */
