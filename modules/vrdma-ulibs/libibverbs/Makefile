@@ -4,8 +4,8 @@ INCLUDES=-I./include -I./ -I../../../ -I../../../arch/common -I../../../include/
 
 LFLAGS=-L./
 
-CPP_SRCS=cmd.cc virtio_hyv/virtio_hyv_hypercall.cc virtio_hyv/hyv_dev.cc
-CPP_O=cmd.o virtio_hyv_hypercall.o hyv_dev.o
+CPP_SRCS=cmd.cc
+CPP_O=cmd.o
 
 MAIN_SRCS=compat-1_0.c device.c enum_strs.c init.c marshall.c memory.c sysfs.c verbs.c
 MAIN=libibverbs.so.1.0.0
