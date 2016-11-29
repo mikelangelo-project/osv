@@ -68,9 +68,6 @@
         (type *)((char *)_p - offsetof(type, member));          \
 })
 
-#define min(x, y)     ((x) < (y) ? (x) : (y))
-
-
 // ofed/include/linux/slab.h
 #define	kmalloc(size, flags)        malloc(size)
 #define	kzalloc(size, flags)        kmalloc((size), (flags) | M_ZERO)
