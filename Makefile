@@ -802,7 +802,9 @@ drivers += drivers/pci-bridge.o
 drivers += drivers/driver.o
 
 $(out)/drivers/virtio-rdma.o: INCLUDES += -isystem bsd/sys/ofed/include
+$(out)/drivers/virtio-rdma.o: INCLUDES += -isystem modules/vrdma-ulibs/libibverbs/include
 $(out)/arch/$(arch)/arch-setup.o: INCLUDES += -isystem bsd/sys/ofed/include
+$(out)/arch/$(arch)/arch-setup.o: INCLUDES += -isystem modules/vrdma-ulibs/libibverbs/include
 ifeq ($(arch),x64)
 drivers += $(libtsm)
 drivers += drivers/vga.o drivers/kbd.o drivers/isa-serial.o
