@@ -80,6 +80,7 @@ struct ibv_pd *mlx4_alloc_pd(struct ibv_context *context)
 	struct mlx4_alloc_pd_resp resp;
 	struct mlx4_pd		 *pd;
 
+	debug("mlx4_alloc_pd\n");
 	pd = malloc(sizeof *pd);
 	if (!pd)
 		return NULL;

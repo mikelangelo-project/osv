@@ -148,6 +148,8 @@ static struct ibv_context *mlx4_alloc_context(struct ibv_device *ibdev, int cmd_
 	struct ibv_device_attr		dev_attrs;
 	unsigned int			bf_reg_size;
 
+	debug("mlx4_alloc_context\n");
+
 	context = calloc(1, sizeof *context);
 	if (!context)
 		return NULL;
@@ -194,15 +196,19 @@ static struct ibv_context *mlx4_alloc_context(struct ibv_device *ibdev, int cmd_
 
 	pthread_mutex_init(&context->db_list_mutex, NULL);
 
-	context->uar = mmap(NULL, to_mdev(ibdev)->page_size, PROT_WRITE,
-			    MAP_SHARED, cmd_fd, 0);
-	if (context->uar == MAP_FAILED)
+	/* context->uar = mmap(NULL, to_mdev(ibdev)->page_size, PROT_WRITE, */
+	/* 		    MAP_SHARED, cmd_fd, 0); */
+	context->uar = malloc(to_mdev(ibdev)->page_size);
+	if (context->uar == MAP_FAILED) {
+	debug("mlx4_alloc_context: mmap failed.\n");
 		goto err_free;
+	}
 
 	if (bf_reg_size) {
-		context->bf_page = mmap(NULL, to_mdev(ibdev)->page_size,
-					PROT_WRITE, MAP_SHARED, cmd_fd,
-					to_mdev(ibdev)->page_size);
+		/* context->bf_page = mmap(NULL, to_mdev(ibdev)->page_size, */
+		/* 			PROT_WRITE, MAP_SHARED, cmd_fd, */
+		/* 			to_mdev(ibdev)->page_size); */
+		context->bf_page = malloc(to_mdev(ibdev)->page_size);
 		if (context->bf_page == MAP_FAILED) {
 			fprintf(stderr, PFX "Warning: BlueFlame available, "
 				"but failed to mmap() BlueFlame page.\n");
@@ -273,6 +279,8 @@ static struct ibv_device *mlx4_driver_init(const char *uverbs_sys_path,
 	unsigned		vendor, device;
 	int			i;
 
+	debug("mlx4_driver_init\n");
+
 	if (ibv_read_sysfs_file(uverbs_sys_path, "device/vendor",
 				value, sizeof value) < 0)
 		return NULL;
@@ -291,6 +299,7 @@ static struct ibv_device *mlx4_driver_init(const char *uverbs_sys_path,
 	return NULL;
 
 found:
+    debug("mlx4_driver_init: device found! \n");
 	if (abi_version < MLX4_UVERBS_MIN_ABI_VERSION ||
 	    abi_version > MLX4_UVERBS_MAX_ABI_VERSION) {
 		fprintf(stderr, PFX "Fatal: ABI version %d of %s is not supported "
@@ -318,6 +327,7 @@ found:
 #ifdef HAVE_IBV_REGISTER_DRIVER
 static __attribute__((constructor)) void mlx4_register_driver(void)
 {
+	printf("mlx4_register_diver\n");
 	ibv_register_driver("mlx4", mlx4_driver_init);
 }
 #else
@@ -333,6 +343,8 @@ struct ibv_device *openib_driver_init(struct sysfs_class_device *sysdev)
 	if (ibv_read_sysfs_file(sysdev->path, "abi_version",
 				value, sizeof value) > 0)
 		abi_ver = strtol(value, NULL, 10);
+
+	debug("openib_driver_init\n");
 
 	return mlx4_driver_init(sysdev->path, abi_ver);
 }
