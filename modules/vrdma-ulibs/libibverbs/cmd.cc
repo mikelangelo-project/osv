@@ -43,15 +43,49 @@
 #include <string.h>
 
 #include <infiniband/verbs.h>
-#include <rdma/ib_user_verbs.h>
+#include <infiniband/kern-abi.h>
+#include <linux/err.h>
 
 #include <drivers/virtio-rdma.hh>
 
-#include "ibverbs.h"
+#include <ibverbs.h>
 
 BEGIN_C_DECLS
 
+extern int abi_ver;
+
+#define IBV_INIT_CMD(cmd, size, opcode)					\
+	do {								\
+		if (abi_ver > 2)					\
+			(cmd)->command = IB_USER_VERBS_CMD_##opcode;	\
+		else							\
+			(cmd)->command = IB_USER_VERBS_CMD_##opcode##_V2; \
+		(cmd)->in_words  = (size) / 4;				\
+		(cmd)->out_words = 0;					\
+	} while (0)
+
+#define IBV_INIT_CMD_RESP(cmd, size, opcode, out, outsize)		\
+	do {								\
+		if (abi_ver > 2)					\
+			(cmd)->command = IB_USER_VERBS_CMD_##opcode;	\
+		else							\
+			(cmd)->command = IB_USER_VERBS_CMD_##opcode##_V2; \
+		(cmd)->in_words  = (size) / 4;				\
+		(cmd)->out_words = (outsize) / 4;			\
+		(cmd)->response  = (uintptr_t) (out);			\
+	} while (0)
+
+#define INIT_UDATA(udata, ibuf, obuf, ilen, olen)			\
+	do {								\
+		(udata)->inbuf  = (void *) (ibuf);		\
+		(udata)->outbuf = (void *) (obuf);		\
+		(udata)->inlen  = (ilen);				\
+		(udata)->outlen = (olen);				\
+	} while (0)
+
 using namespace virtio;
+
+rdma *rdma_drv = rdma::instance();
 
 // static int ibv_cmd_get_context_v2(struct ibv_context *context,
 // 				  struct ibv_get_context *new_cmd,
@@ -95,22 +129,41 @@ int ibv_cmd_get_context(struct ibv_context *context, struct ibv_get_context *cmd
 			size_t cmd_size, struct ibv_get_context_resp *resp,
 			size_t resp_size)
 {
+
+	struct ib_udata ibudata;
+	int ret=0;
+	struct ib_ucontext		 *ucontext;
+	struct ib_uverbs_get_context      kcmd;
+	struct ib_uverbs_get_context_resp kresp;
+
 	debug("ibv_cmd_get_context\n");
 
-	// if (abi_ver <= 2)
-	// 	return ibv_cmd_get_context_v2(context, cmd, cmd_size, resp, resp_size);
+	IBV_INIT_CMD_RESP(cmd, cmd_size, GET_CONTEXT, resp, resp_size);
 
-	// IBV_INIT_CMD_RESP(cmd, cmd_size, GET_CONTEXT, resp, resp_size);
+	INIT_UDATA(&ibudata, cmd + sizeof(kcmd),
+			   kcmd.response + sizeof(kresp),
+			   cmd_size - sizeof(kcmd), /*in_len*/
+			   resp_size - sizeof(kresp)); /*out_len*/
 
-	// if (write(context->cmd_fd, cmd, cmd_size) != cmd_size)
-	// 	return errno;
+	ucontext = rdma_drv->vrdma_alloc_ucontext(&ibudata);
+	if (IS_ERR(ucontext)) {
+		ret = PTR_ERR(ucontext);
+	}
 
-	// VALGRIND_MAKE_MEM_DEFINED(resp, resp_size);
+	INIT_LIST_HEAD(&ucontext->pd_list);
+	INIT_LIST_HEAD(&ucontext->mr_list);
+	INIT_LIST_HEAD(&ucontext->mw_list);
+	INIT_LIST_HEAD(&ucontext->cq_list);
+	INIT_LIST_HEAD(&ucontext->qp_list);
+	INIT_LIST_HEAD(&ucontext->srq_list);
+	INIT_LIST_HEAD(&ucontext->ah_list);
+	INIT_LIST_HEAD(&ucontext->xrcd_list);
+	ucontext->closing = 0;
 
-	// context->async_fd         = resp->async_fd;
-	// context->num_comp_vectors = resp->num_comp_vectors;
+	context->async_fd         = resp->async_fd;
+	context->num_comp_vectors = resp->num_comp_vectors;
 
-	return 0;
+	return ret;
 }
 
 int ibv_cmd_query_device(struct ibv_context *context,
@@ -129,39 +182,7 @@ int ibv_cmd_query_device(struct ibv_context *context,
 		return -ENOMEM;
 	}
 
-	// turn this into a template or a new macro
-	{
-        int ret = -1;
-		uint32_t attr_size = sizeof(*attr);
-        const struct rdma::hcall_parg pargs[] = { { attr, attr_size } , };
-        struct _args_t {
-			struct rdma::hyv_ibv_query_deviceX_copy_args copy_args;
-			struct rdma::vrdma_hypercall_result result;
-        } *_args;
-
-        _args = (struct _args_t *) malloc(sizeof(*_args));
-
-        if (!_args) {
-            return ret;
-        }
-
-        rdma *rdma_drv = rdma::instance();
-
-		uint32_t host_handle = rdma_drv->ib_dev.host_handle;
-        _args->copy_args.hdr = (struct rdma::hcall_header) {
-			rdma_drv->VIRTIO_HYV_IBV_QUERY_DEV, 0,
-			rdma_drv->HCALL_NOTIFY_HOST | rdma_drv->HCALL_SIGNAL_GUEST };
-
-        memcpy(&_args->copy_args.dev_handle, &host_handle, sizeof(host_handle));
-
-		ret = rdma_drv->do_hcall_sync(rdma_drv->get_vg()->vq_hcall,
-									  &_args->copy_args.hdr, sizeof(_args->copy_args),
-									  pargs, (sizeof (pargs) / sizeof ((pargs)[0])),
-									  &_args->result.hdr, sizeof(_args->result));
-
-        if (!ret) memcpy(&hret, &_args->result.value, sizeof(hret));
-        free(_args);
-	}
+	ret = rdma_drv->vrdma_query_device(attr, &hret);
 	if (ret || hret) {
 		debug("could not query device on host\n");
 		kfree(attr);
@@ -210,6 +231,7 @@ int ibv_cmd_query_device(struct ibv_context *context,
 	device_attr->local_ca_ack_delay        = attr->local_ca_ack_delay;
 	device_attr->phys_port_cnt	       = attr->phys_port_cnt;
 
+	kfree(attr);
 	return 0;
 }
 
@@ -217,9 +239,10 @@ int ibv_cmd_query_port(struct ibv_context *context, uint8_t port_num,
 		       struct ibv_port_attr *port_attr,
 		       struct ibv_query_port *cmd, size_t cmd_size)
 {
-	// dprint(DBG_IBV, "\n");
 	ib_uverbs_query_port_resp *attr;
-	int hret;
+	int ret, hret;
+
+	debug("ibv_cmd_query_port\n");
 
 	attr = (ib_uverbs_query_port_resp*) kmalloc(sizeof(*attr), GFP_KERNEL);
 	if (!attr) {
@@ -227,37 +250,11 @@ int ibv_cmd_query_port(struct ibv_context *context, uint8_t port_num,
 		return -ENOMEM;
 	}
 
-	// int hyv_ibv_query_port(struct ib_device *ibdev, u8 port,
-	// 	       struct ib_port_attr *ibattr);
-	{
-        int ret = -1;
-		uint32_t attr_size = sizeof(*attr);
-        const struct rdma::hcall_parg pargs[] = { { attr, attr_size } , };
-        struct _args_t {
-			struct rdma::hyv_ibv_query_portX_copy_args copy_args;
-			struct rdma::vrdma_hypercall_result result;
-        } *_args;
-
-        _args = (struct _args_t *) malloc(sizeof(*_args));
-
-        if (!_args) {
-            return -12;
-        }
-        rdma *rdma_drv = rdma::instance();
-		uint32_t host_handle = rdma_drv->ib_dev.host_handle;
-
-        _args->copy_args.hdr = (struct rdma::hcall_header) {
-			rdma_drv->VIRTIO_HYV_IBV_QUERY_PORT, 0,
-			rdma_drv->HCALL_NOTIFY_HOST | rdma_drv->HCALL_SIGNAL_GUEST };
-        memcpy(&_args->copy_args.dev_handle, &host_handle, sizeof(host_handle));
-	    memcpy(&_args->copy_args.port_num, &port_num, sizeof(port_num));
-
-		ret = rdma_drv->do_hcall_sync(rdma_drv->get_vg()->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args),
-										  pargs, (sizeof (pargs) / sizeof ((pargs)[0])),
-										  &_args->result.hdr, sizeof(_args->result));
-
-        if (!ret) memcpy(&hret, &_args->result.value, sizeof(hret));
-        free(_args);
+	ret = rdma_drv->vrdma_query_port(attr, port_num, &hret);
+	if (ret || hret) {
+		debug("could not query port on host\n");
+		kfree(attr);
+		return ret ? ret : hret;
 	}
 
 	port_attr->state      	   = (ibv_port_state) attr->state;
@@ -281,6 +278,7 @@ int ibv_cmd_query_port(struct ibv_context *context, uint8_t port_num,
 	port_attr->phys_state      = attr->phys_state;
 	port_attr->link_layer      = attr->link_layer;
 
+	kfree(attr);
 	return 0;
 }
 
@@ -288,16 +286,33 @@ int ibv_cmd_alloc_pd(struct ibv_context *context, struct ibv_pd *pd,
 		     struct ibv_alloc_pd *cmd, size_t cmd_size,
 		     struct ibv_alloc_pd_resp *resp, size_t resp_size)
 {
-	//dprint(DBG_IBV, "\n");
-	// IBV_INIT_CMD_RESP(cmd, cmd_size, ALLOC_PD, resp, resp_size);
+	struct ib_uverbs_alloc_pd      kcmd;
+	struct ib_uverbs_alloc_pd_resp kresp;
+	struct ib_udata                ibudata;
+	struct ib_uobject             *uobj;
+	struct ib_pd                  *kpd;
 
-	// if (write(context->cmd_fd, cmd, cmd_size) != cmd_size)
-	// 	return errno;
+	debug("ibv_cmd_alloc_pd\n");
 
-	// VALGRIND_MAKE_MEM_DEFINED(resp, resp_size);
+    IBV_INIT_CMD_RESP(cmd, cmd_size, ALLOC_PD, resp, resp_size);
+	INIT_UDATA(&ibudata, cmd + sizeof(kcmd),
+			   kcmd.response + sizeof(kresp),
+			   cmd_size - sizeof(kcmd), /*cmd_size = in_len*/
+			   resp_size - sizeof(kresp)); /*resp_size = out_len*/
 
-	// pd->handle  = resp->pd_handle;
-	// pd->context = context;
+	uobj = (struct ib_uobject*) kmalloc(sizeof *uobj, GFP_KERNEL);
+	if (!uobj)
+		return -ENOMEM;
+
+	kpd = rdma_drv->vrdma_alloc_pd(&ibudata);
+	kpd->uobject = uobj;
+	resp->pd_handle = uobj->id;
+
+	pd->handle  = resp->pd_handle;
+	pd->context = context;
+
+	printf("pd->handle: %d\n", pd->handle);
+	printf("pd->context: %p\n", pd->context);
 
 	return 0;
 }
@@ -322,6 +337,7 @@ int ibv_cmd_reg_mr(struct ibv_pd *pd, void *addr, size_t length,
 		   size_t cmd_size,
 		   struct ibv_reg_mr_resp *resp, size_t resp_size)
 {
+	debug("ibv_cmd_reg_mr\n");
 	// dprint(DBG_IBV, "\n");
 	// IBV_INIT_CMD_RESP(cmd, cmd_size, REG_MR, resp, resp_size);
 

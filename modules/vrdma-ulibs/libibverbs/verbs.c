@@ -140,6 +140,7 @@ struct ibv_pd *__ibv_alloc_pd(struct ibv_context *context)
 {
 	struct ibv_pd *pd;
 
+	debug("ibv_alloc_pd\n");
 	pd = context->ops.alloc_pd(context);
 	if (pd)
 		pd->context = context;
