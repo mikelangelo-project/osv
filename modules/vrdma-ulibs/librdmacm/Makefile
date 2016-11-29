@@ -11,7 +11,7 @@ module: $(MAIN)
 
 $(MAIN): $(SRCS)
 	$(CC) -DOSV_CLI $(CFLAGS) $(INCLUDES) -fPIC -shared -o $@ $(SRCS) $(LFLAGS) $(LIBS)
-
+	ln -s -f ./librdmacm.so.1.0.0 ./librdmacm.so
 clean:
 	rm -f $(MAIN)
 install:
