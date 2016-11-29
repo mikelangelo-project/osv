@@ -8,6 +8,7 @@
 #include <osv/mempool.hh>
 #include <osv/interrupt.hh>
 #include <osv/sched.hh>
+#include <linux/err.h>
 #include "drivers/virtio-rdma.hh"
 
 
@@ -94,51 +95,21 @@ rdma::~rdma()
 
 int rdma::register_ib_dev()
 {
-    int ret;
-    int result;
+    int ret, result;
 
     debug("vRDMA: Register hyv device.\n");
 
-    ib_dev.vg = _vg;
-    ib_dev.host_handle = 0;
-    uint32_t host_handle = ib_dev.host_handle;
-    //ib_dev->dev.release = &hyv_release_dev;
+    hyv_dev.vg = _vg;
+    hyv_dev.host_handle = 0;
+    //hyv_dev->dev.release = &hyv_release_dev;
 
     /* open device */
-    {
-        const struct hcall_parg pargs[] = { };
-        struct _args_t {
-            struct hyv_get_ib_device_copy_args copy_args;
-            struct vrdma_hypercall_result result;
-        } *_args;
-
-        _args = (struct _args_t *) malloc(sizeof(*_args));
-        if (!_args) {
-            return -12; // what is -12 here? probably ENOMEM??
-        }
-
-        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_GET_IB_DEV, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
-        memcpy(&_args->copy_args.dev_handle, &host_handle, sizeof(host_handle));
-
-        ret = do_hcall_sync(ib_dev.vg->vq_hcall,
-                            &_args->copy_args.hdr,
-                            sizeof(_args->copy_args),
-                            pargs, (sizeof (pargs) / sizeof ((pargs)[0])),
-                            &_args->result.hdr, sizeof(_args->result));
-
-        if (!ret)
-        {
-            memcpy(&result, &_args->result.value, sizeof(result));
-        }
-        free(_args);
-    }
-
+    ret = vrdma_open_device(&result);
     if (ret || result) {
         debug("vRDMA: Could not get device on host\n");
         ret = ret ? ret : result;
         goto fail_alloc;
     }
-
 
     /* query device */
     ib_uverbs_query_device_resp *attr;
@@ -147,30 +118,8 @@ int rdma::register_ib_dev()
         debug("vRDMA: Could not allocate device attr.\n");
         return -ENOMEM;
     }
-    {
-        int ret = -1;
-        uint32_t attr_size = sizeof(*attr);
-        const struct hcall_parg pargs[] = { { attr, attr_size } , };
-        struct _args_t {
-            struct hyv_ibv_query_deviceX_copy_args copy_args;
-            struct vrdma_hypercall_result result;
-        } *_args;
 
-        _args = (struct _args_t *) malloc(sizeof(*_args));
-        if (!_args) {
-            return ret;
-        }
-
-        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_QUERY_DEV, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
-        memcpy(&_args->copy_args.dev_handle, &host_handle, sizeof(host_handle));
-
-        ret = do_hcall_sync(ib_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args),
-                                          pargs, (sizeof (pargs) / sizeof ((pargs)[0])),
-                                          &_args->result.hdr, sizeof(_args->result));
-
-        if (!result) memcpy(&result, &_args->result.value, sizeof(result));
-        free(_args);
-    }
+    ret = vrdma_query_device(attr, &result);
     if (ret || result) {
         debug("vRDMA: Could not query device on host\n");
         kfree(attr);
@@ -179,15 +128,19 @@ int rdma::register_ib_dev()
     }
 
     /* ib device initialization */
-    ib_dev.ibdev.node_guid = attr->node_guid;
-    ib_dev.ibdev.phys_port_cnt = attr->phys_port_cnt;
+    hyv_dev.ib_dev.node_guid = attr->node_guid;
+    hyv_dev.ib_dev.phys_port_cnt = attr->phys_port_cnt;
 
     /* use vendor/device id to match driver */
-    ib_dev.id.vendor = attr->vendor_id;
-    ib_dev.id.device = attr->vendor_part_id;
+    hyv_dev.id.vendor = attr->vendor_id;
+    hyv_dev.id.device = attr->vendor_part_id;
 
     // where can we get the device index in OSv??
     // dev->index =
+
+
+    // initialize the struct members of ib_device
+//    hyv_dev.ib_dev.ops->alloc_ucontext = vrdma_ibv_alloc_ucontext;
 
 fail_get:
     // it seems we don't need to do so.
@@ -200,6 +153,52 @@ fail_get:
 
 fail_alloc:
     return ret;
+}
+
+struct rdma::hyv_udata* rdma::udata_create(struct ib_udata *ibudata)
+{
+    int ret = -1;
+    struct rdma::hyv_udata *udata;
+    unsigned long inlen;
+
+    debug("vRDMA: udata_create\n");
+
+
+    if(ibudata->inlen < sizeof(struct ib_uverbs_cmd_hdr)) {
+        debug("vRDMA: udata size is not correct. \n");
+        goto fail;
+    }
+
+    inlen = ibudata->inlen - sizeof(struct ib_uverbs_cmd_hdr);
+
+    debug("vRDMA: sizeof udata: %d, inlen: %d, outlen: %d\n", sizeof(*udata) , inlen , ibudata->outlen);
+
+    udata = (rdma::hyv_udata *) kmalloc(sizeof(*udata) + inlen + ibudata->outlen, GFP_KERNEL);
+    if (!udata) {
+        debug("vRDMA: could not allocate udata\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
+    udata->in = inlen;
+    udata->out = ibudata->outlen;
+
+    memcpy(udata->data, ibudata, inlen);
+
+    return udata;
+//fail_udata:
+    kfree(udata);
+fail:
+    return (rdma::hyv_udata*) ERR_PTR(ret);
+}
+
+
+int rdma::udata_copy_out(hyv_udata *udata, struct ib_udata *ibudata)
+{
+    void *out = udata->data + udata->in;
+
+    ibudata = (struct ib_udata *) out;
+
+    return 0;
 }
 
 void rdma::ack_irq()
@@ -430,5 +429,249 @@ hw_driver* rdma::probe(hw_device* dev)
 {
     return virtio::probe<rdma, VIRTIO_RDMA_DEVICE_ID>(dev);
 }
+
+
+// Implementations of verb calls using hypercall
+
+struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
+{
+    // TODO: possibly support other providers
+    // virtmlx4_alloc_ucontext
+    // struct ib_ucontext *ibuctx; // uctx
+    // struct hyv_ucontext *guctx;
+    // struct virtmlx4_ucontext *vuctx;
+    int ret, hret;
+
+    debug("vrdma_ibv_alloc_ucontext\n");
+
+    BUG_ON(!udata);
+
+    struct hyv_udata *udata;
+
+    hyv_uctx = (struct hyv_ucontext*) kmalloc(sizeof(struct hyv_ucontext), GFP_KERNEL);
+    if (!hyv_uctx) {
+        debug("vRDMA: could not allocate user context\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
+    INIT_LIST_HEAD(&hyv_uctx->mmap_list);
+    spin_lock_init(&hyv_uctx->mmap_lock);
+
+    udata = udata_create(ibudata);
+    if (IS_ERR(udata)) {
+        ret = PTR_ERR(udata);
+        goto fail_uctx;
+    }
+
+    {
+        const struct hcall_parg pargs[] = { { udata,  (uint32_t)  (sizeof(*udata) + (uint32_t) ( udata->in + udata->out)) } , };
+        struct _args_t {
+            struct hyv_ibv_alloc_ucontextX_copy_args copy_args;
+            struct vrdma_hypercall_result result;
+        } *_args;
+
+        _args = (struct _args_t *) malloc(sizeof(*_args));
+
+        if (!_args)
+        { ret = -12; }
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_ALLOC_UCTX, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+
+        memcpy(&_args->copy_args.dev_handle, &hyv_dev.host_handle, sizeof(hyv_dev.host_handle)); ;
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr,
+                            sizeof(_args->copy_args), pargs,
+                            (sizeof (pargs) / sizeof ((pargs)[0])),
+                            &_args->result.hdr, sizeof(_args->result));
+
+        if (!ret)
+            memcpy(&hret, &_args->result.value, sizeof(hret));
+        free(_args);
+    }
+    if (ret || hret < 0) {
+        debug("could not query gid on host\n");
+        ret = ret ? ret : hret;
+        goto fail_udata;
+    }
+    hyv_uctx->host_handle = hret;
+
+    ret = udata_copy_out(udata, ibudata);
+    kfree(udata);
+    if (ret) {
+        goto fail_alloc_ucontext;
+    }
+
+    /* XXX */
+    hyv_uctx->ibuctx.device = &hyv_dev.ib_dev;
+
+    return &hyv_uctx->ibuctx;
+
+fail_udata:
+    kfree(udata);
+fail_uctx:
+    kfree(hyv_uctx);
+fail:
+    return (ib_ucontext*) ERR_PTR(ret);
+
+fail_alloc_ucontext:
+    /* in non-error case ib core would take care of this */
+    hyv_uctx->ibuctx.device = &hyv_dev.ib_dev;
+    // hyv_ibv_dealloc_ucontext(&hyv_uctx->ibuctx);
+    return (ib_ucontext*) ERR_PTR(ret);
+}
+
+int rdma::vrdma_open_device(int *result)
+{
+    int ret = -1;
+    const struct hcall_parg pargs[] = { };
+    struct _args_t {
+        struct hyv_get_ib_device_copy_args copy_args;
+        struct vrdma_hypercall_result result;
+    } *_args;
+
+    _args = (struct _args_t *) malloc(sizeof(*_args));
+    if (!_args) {
+        return -12; // what is -12 here? probably ENOMEM??
+    }
+
+    _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_GET_IB_DEV, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+    memcpy(&_args->copy_args.dev_handle, &hyv_dev.host_handle, sizeof(hyv_dev.host_handle));
+
+    ret = do_hcall_sync(hyv_dev.vg->vq_hcall,
+                        &_args->copy_args.hdr,
+                        sizeof(_args->copy_args),
+                        pargs, (sizeof (pargs) / sizeof ((pargs)[0])),
+                        &_args->result.hdr, sizeof(_args->result));
+
+    if (!ret)
+        memcpy(result, &_args->result.value, sizeof(*result));
+    free(_args);
+
+    return ret;
+}
+
+int rdma::vrdma_query_device(ib_uverbs_query_device_resp *attr, int *result)
+{
+    int ret = -1;
+    uint32_t attr_size = sizeof(*attr);
+    const struct hcall_parg pargs[] = { { attr, attr_size } , };
+    struct _args_t {
+        struct hyv_ibv_query_deviceX_copy_args copy_args;
+        struct vrdma_hypercall_result result;
+    } *_args;
+
+    _args = (struct _args_t *) malloc(sizeof(*_args));
+    if (!_args)
+        return ret;
+
+    _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_QUERY_DEV, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+    memcpy(&_args->copy_args.dev_handle, &hyv_dev.host_handle, sizeof(hyv_dev.host_handle));
+
+    ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args),
+                                      pargs, (sizeof (pargs) / sizeof ((pargs)[0])),
+                                      &_args->result.hdr, sizeof(_args->result));
+
+    if (!ret)
+        memcpy(result, &_args->result.value, sizeof(*result));
+    free(_args);
+
+    return ret;
+}
+
+
+int rdma::vrdma_query_port(ib_uverbs_query_port_resp *attr, int port_num, int *result)
+{
+    int ret = -1;
+    uint32_t attr_size = sizeof(*attr);
+    const struct rdma::hcall_parg pargs[] = { { attr, attr_size } , };
+    struct _args_t {
+        struct rdma::hyv_ibv_query_portX_copy_args copy_args;
+        struct rdma::vrdma_hypercall_result result;
+    } *_args;
+
+    _args = (struct _args_t *) malloc(sizeof(*_args));
+
+    if (!_args)
+        return -12;
+
+    _args->copy_args.hdr = (struct rdma::hcall_header) { VIRTIO_HYV_IBV_QUERY_PORT, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+    memcpy(&_args->copy_args.dev_handle, &hyv_dev.host_handle, sizeof(hyv_dev.host_handle));
+    memcpy(&_args->copy_args.port_num, &port_num, sizeof(port_num));
+
+    ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args),
+                        pargs, (sizeof (pargs) / sizeof ((pargs)[0])),
+                        &_args->result.hdr, sizeof(_args->result));
+
+    if (!ret) memcpy(result, &_args->result.value, sizeof(*result));
+    free(_args);
+
+    return ret;
+}
+
+struct ib_pd* rdma::vrdma_alloc_pd(struct ib_udata *ibudata)
+{
+    hyv_udata *udata;
+    int ret, result;
+
+    hpd = (hyv_pd*) kzalloc(sizeof(*hpd), GFP_KERNEL);
+    if (!hpd) {
+        debug("vRDMA: could not allocate pd\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
+
+    udata = udata_create(ibudata);
+    if (IS_ERR(udata)) {
+        ret = PTR_ERR(udata);
+        goto fail_pd;
+    }
+
+    {
+        const struct hcall_parg pargs[] = { { udata, (uint32_t) (sizeof(*udata) + (uint32_t) ( udata->in + udata->out)) } , };
+        struct _args_t { struct hyv_ibv_alloc_pdX_copy_args copy_args; struct vrdma_hypercall_result result; } *_args;
+        _args = (struct _args_t *) malloc(sizeof(*_args));
+
+        if (!_args) { ret = -12; }
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_ALLOC_PD, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+        memcpy(&_args->copy_args.uctx_handle, &hyv_uctx->host_handle, sizeof(hyv_uctx->host_handle));
+
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args),
+                            pargs, (sizeof (pargs) / sizeof ((pargs)[0])),
+                            &_args->result.hdr, sizeof(_args->result));
+
+        if (!ret)
+            memcpy(&result, &_args->result.value, sizeof(result));
+
+        free(_args);
+    }
+    if (ret || result < 0) {
+        debug("vRDMA: could not alloc pd on host\n");
+        ret = ret ? ret : result;
+        goto fail_udata;
+    }
+
+    hpd->host_handle = result;
+    hpd->ibpd.device  = &hyv_dev.ib_dev;
+
+    ret = udata_copy_out(udata, ibudata);
+    kfree(udata);
+    if (ret) {
+        goto fail_alloc;
+    }
+
+    return &hpd->ibpd;
+
+fail_udata:
+    kfree(udata);
+fail_pd:
+    kfree(hpd);
+fail:
+    return (ib_pd*) ERR_PTR(ret);
+
+fail_alloc:
+    //hyv_ibv_dealloc_pd(&hpd->ibpd);
+    return (ib_pd*) ERR_PTR(ret);
+}
+
 
 }

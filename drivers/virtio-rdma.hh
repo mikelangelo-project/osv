@@ -12,6 +12,7 @@
 #include <osv/device.h>
 #include <asm/atomic.h>
 #include <rdma/ib_verbs.h>
+#include <rdma/ib_user_verbs.h>
 #include "drivers/virtio.hh"
 #include "drivers/device.hh"
 
@@ -119,52 +120,6 @@ public:
 //        spinlock_t lock;
     };
 
-// including ib_user_verbs.h will introduce a lot of issues
-// we just need one definition here.
-struct ib_uverbs_query_device_resp {
-    uint64_t fw_ver;
-    __be64 node_guid;
-    __be64 sys_image_guid;
-    uint64_t max_mr_size;
-    uint64_t page_size_cap;
-    uint32_t vendor_id;
-    uint32_t vendor_part_id;
-    uint32_t hw_ver;
-    uint32_t max_qp;
-    uint32_t max_qp_wr;
-    uint32_t device_cap_flags;
-    uint32_t max_sge;
-    uint32_t max_sge_rd;
-    uint32_t max_cq;
-    uint32_t max_cqe;
-    uint32_t max_mr;
-    uint32_t max_pd;
-    uint32_t max_qp_rd_atom;
-    uint32_t max_ee_rd_atom;
-    uint32_t max_res_rd_atom;
-    uint32_t max_qp_init_rd_atom;
-    uint32_t max_ee_init_rd_atom;
-    uint32_t atomic_cap;
-    uint32_t max_ee;
-    uint32_t max_rdd;
-    uint32_t max_mw;
-    uint32_t max_raw_ipv6_qp;
-    uint32_t max_raw_ethy_qp;
-    uint32_t max_mcast_grp;
-    uint32_t max_mcast_qp_attach;
-    uint32_t max_total_mcast_qp_attach;
-    uint32_t max_ah;
-    uint32_t max_fmr;
-    uint32_t max_map_per_fmr;
-    uint32_t max_srq;
-    uint32_t max_srq_wr;
-    uint32_t max_srq_sge;
-    uint16_t max_pkeys;
-    uint8_t  local_ca_ack_delay;
-    uint8_t  phys_port_cnt;
-    uint8_t  reserved[4];
-};
-
 typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
 
    struct  hyv_event_queue
@@ -226,6 +181,16 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         int32_t value;
     };
 
+    struct hyv_ibv_alloc_ucontextX_copy_args {
+        struct hcall_header hdr;
+        int32_t dev_handle;
+    };
+
+    struct hyv_ibv_alloc_pdX_copy_args {
+        struct hcall_header hdr;
+        uint32_t uctx_handle; };
+
+
     struct hcall
     {
         u32 async;
@@ -257,7 +222,9 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
 
     struct hyv_device
     {
-        struct ib_device ibdev;
+        // we keep both ib_dev and ibv_dev here.
+        //struct ibv_device ibv_dev;
+        struct ib_device ib_dev;
 
         int index;
         struct device dev;
@@ -287,6 +254,28 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         return _vg;
     }
 
+    struct hyv_udata
+    {
+        uint32_t in;
+        uint32_t out;
+        uint8_t data[0];
+    };
+
+    struct hyv_pd
+    {
+        struct ib_pd ibpd;
+
+        uint32_t host_handle;
+
+        struct hyv_mr_cache *dma_mr_cache;
+
+        void *priv;
+    };
+
+
+    struct hyv_udata* udata_create(struct ib_udata *ibudata);
+    int udata_copy_out(hyv_udata *udata, struct ib_udata *ibudata);
+
     struct hyv_cq
     {
         struct ib_cq ibcq;
@@ -312,13 +301,28 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
 
         void *priv;
     };
+    struct hyv_ucontext
+    {
+        struct ib_ucontext ibuctx;
 
-    int ibv_cmd_query_device(struct ibv_context *context,
-                             struct ibv_device_attr *device_attr,
-                             uint64_t *raw_fw_ver,
-                             struct ibv_query_device *cmd, size_t cmd_size);
+        struct list_head mmap_list;
+        spinlock_t mmap_lock;
+        uint32_t host_handle;
 
-    struct hyv_device ib_dev;
+        void *priv;
+    };
+
+    struct hyv_device hyv_dev;
+    struct hyv_ucontext *hyv_uctx;
+    struct hyv_pd *hpd;
+
+
+    // implementations of the verb calls using hypercall
+    int vrdma_open_device(int *result);
+    int vrdma_query_device(ib_uverbs_query_device_resp *attr, int *result);
+    int vrdma_query_port(ib_uverbs_query_port_resp *attr, int port_num, int *result);
+    struct ib_ucontext *vrdma_alloc_ucontext(struct ib_udata *ibudata);
+    struct ib_pd* vrdma_alloc_pd(struct ib_udata *ibudata);
 
 private:
     void handle_event();
