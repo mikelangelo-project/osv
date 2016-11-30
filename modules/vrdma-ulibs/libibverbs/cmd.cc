@@ -87,6 +87,14 @@ using namespace virtio;
 
 rdma *rdma_drv = rdma::instance();
 
+
+static void init_uobj(struct ib_uobject *uobj, u64 user_handle)
+{
+	uobj->user_handle = user_handle;
+	uobj->context     = &rdma_drv->hyv_uctx->ibuctx;
+	uobj->live        = 0;
+}
+
 // static int ibv_cmd_get_context_v2(struct ibv_context *context,
 // 				  struct ibv_get_context *new_cmd,
 // 				  size_t new_cmd_size,
@@ -304,15 +312,14 @@ int ibv_cmd_alloc_pd(struct ibv_context *context, struct ibv_pd *pd,
 	if (!uobj)
 		return -ENOMEM;
 
+	init_uobj(uobj, 0);
+
 	kpd = rdma_drv->vrdma_alloc_pd(&ibudata);
 	kpd->uobject = uobj;
 	resp->pd_handle = uobj->id;
 
 	pd->handle  = resp->pd_handle;
 	pd->context = context;
-
-	printf("pd->handle: %d\n", pd->handle);
-	printf("pd->context: %p\n", pd->context);
 
 	return 0;
 }
