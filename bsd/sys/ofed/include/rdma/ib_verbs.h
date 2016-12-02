@@ -2415,4 +2415,17 @@ int ib_detach_mcast(struct ib_qp *qp, union ib_gid *gid, u16 lid);
 
 //int ib_detach_flow(struct ib_qp *qp, struct ib_flow_spec *spec, int priority);
 
+static inline int ib_check_mr_access(int flags)
+{
+        /*
+         * Local write permission is required if remote write or
+         * remote atomic permission is also requested.
+         */
+        if (flags & (IB_ACCESS_REMOTE_ATOMIC | IB_ACCESS_REMOTE_WRITE) &&
+            !(flags & IB_ACCESS_LOCAL_WRITE))
+                return -EINVAL;
+
+        return 0;
+}
+
 #endif /* IB_VERBS_H */
