@@ -344,25 +344,47 @@ int ibv_cmd_reg_mr(struct ibv_pd *pd, void *addr, size_t length,
 		   size_t cmd_size,
 		   struct ibv_reg_mr_resp *resp, size_t resp_size)
 {
+	struct ib_uverbs_reg_mr      kcmd;
+	struct ib_uverbs_reg_mr_resp kresp;
+	struct ib_udata              ibudata;
+	struct ib_uobject           *ibuobj;
+	struct ib_mr                *ibmr;
+	int                          ret;
+
 	debug("ibv_cmd_reg_mr\n");
-	// dprint(DBG_IBV, "\n");
-	// IBV_INIT_CMD_RESP(cmd, cmd_size, REG_MR, resp, resp_size);
 
-	// cmd->start 	  = (uintptr_t) addr;
-	// cmd->length 	  = length;
-	// cmd->hca_va 	  = hca_va;
-	// cmd->pd_handle 	  = pd->handle;
-	// cmd->access_flags = access;
+	IBV_INIT_CMD_RESP(cmd, cmd_size, REG_MR, resp, resp_size);
+	cmd->start 	  = (uintptr_t) addr;
+	cmd->length 	  = length;
+	cmd->hca_va 	  = hca_va;
+	cmd->pd_handle 	  = pd->handle;
+	cmd->access_flags = access;
 
-	// if (write(pd->context->cmd_fd, cmd, cmd_size) != cmd_size)
-	// 	return errno;
+	INIT_UDATA(&ibudata, cmd + sizeof(kcmd),
+			   kcmd.response + sizeof(kresp),
+			   cmd_size - sizeof(kcmd), /*cmd_size = in_len*/
+			   resp_size - sizeof(kresp)); /*resp_size = out_len*/
 
-	// VALGRIND_MAKE_MEM_DEFINED(resp, resp_size);
+	if ((cmd->start & ~PAGE_MASK) != (cmd->hca_va & ~PAGE_MASK))
+		return -EINVAL;
 
-	// mr->handle  = resp->mr_handle;
-	// mr->lkey    = resp->lkey;
-	// mr->rkey    = resp->rkey;
-	// mr->context = pd->context;
+	ret = ib_check_mr_access(cmd->access_flags);
+	if (ret)
+		return ret;
+
+	ibuobj = (ib_uobject*) kmalloc(sizeof *ibuobj, GFP_KERNEL);
+	if (!ibuobj)
+		return -ENOMEM;
+
+	init_uobj(ibuobj, 0);
+
+	ibmr = rdma_drv->vrdma_reg_mr(cmd->start, cmd->length, cmd->hca_va,
+						   cmd->access_flags, &ibudata);
+
+	mr->handle  = resp->mr_handle;
+	mr->lkey    = resp->lkey;
+	mr->rkey    = resp->rkey;
+	mr->context = pd->context;
 
 	return 0;
 }
