@@ -430,6 +430,14 @@ hw_driver* rdma::probe(hw_device* dev)
     return virtio::probe<rdma, VIRTIO_RDMA_DEVICE_ID>(dev);
 }
 
+void rdma::hyv_mmap_unprepare(struct ib_ucontext *ibuctx, struct hyv_mmap *mm)
+{
+    spin_lock(&hyv_uctx->mmap_lock);
+    list_del(&mm->list);
+    spin_unlock(&hyv_uctx->mmap_lock);
+
+    //hyv_unmap(ibuctx, mm);
+}
 
 // Implementations of verb calls using hypercall
 
@@ -438,8 +446,9 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
     // TODO: possibly support other providers
     // virtmlx4_alloc_ucontext
     // struct ib_ucontext *ibuctx; // uctx
-    // struct hyv_ucontext *guctx;
-    // struct virtmlx4_ucontext *vuctx;
+
+    struct virtmlx4_ucontext *vuctx;
+
     int ret, hret;
 
     debug("vrdma_ibv_alloc_ucontext\n");
@@ -503,11 +512,47 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
     /* XXX */
     hyv_uctx->ibuctx.device = &hyv_dev.ib_dev;
 
-    return &hyv_uctx->ibuctx;
+    hyv_uctx->priv = NULL;
 
+    vuctx = (virtmlx4_ucontext*) kmalloc(sizeof(*vuctx), GFP_KERNEL);
+    if (!vuctx) {
+        debug("alloc uctx failed\n");
+        ret = -ENOMEM;
+        goto fail_alloc_ucontext;
+    }
+    hyv_uctx->priv = vuctx;
+
+    vuctx->uar_mmap = (hyv_mmap*) kmalloc(sizeof(struct hyv_mmap), GFP_KERNEL);
+    vuctx->uar_mmap->addr = memory::alloc_page();
+    vuctx->uar_mmap->key = 0; //MLX4_IB_MMAP_UAR_PAGE;
+    vuctx->uar_mmap->size = PAGE_SIZE;
+    vuctx->uar_mmap->mapped = false;
+    if (IS_ERR(vuctx->uar_mmap)) {
+        debug("could not prepare uar mmap\n");
+        ret = PTR_ERR(vuctx->uar_mmap);
+        goto fail_vuctx;
+    }
+    list_add_tail(&vuctx->uar_mmap->list, &hyv_uctx->mmap_list);
+
+    vuctx->bf_mmap = (hyv_mmap*) kmalloc(sizeof(*vuctx->uar_mmap), GFP_KERNEL);
+    vuctx->bf_mmap->addr = memory::alloc_page();
+    vuctx->bf_mmap->key = 1; //MLX4_IB_MMAP_BLUE_FLAME_PAGE
+    vuctx->bf_mmap->size = PAGE_SIZE;
+    vuctx->bf_mmap->mapped = false;
+    if (IS_ERR(vuctx->bf_mmap)) {
+        debug("could not prepare bf mmap\n");
+        ret = PTR_ERR(vuctx->bf_mmap);
+        goto fail_uar_mmap;
+    }
+    list_add_tail(&vuctx->uar_mmap->list, &hyv_uctx->mmap_list);
+
+    return &hyv_uctx->ibuctx;
+fail_uar_mmap:
+//hyv_mmap_unprepare(ibuctx, vuctx->uar_mmap);
 fail_udata:
     kfree(udata);
 fail_uctx:
+fail_vuctx:
     kfree(hyv_uctx);
 fail:
     return (ib_ucontext*) ERR_PTR(ret);
@@ -673,5 +718,328 @@ fail_alloc:
     return (ib_pd*) ERR_PTR(ret);
 }
 
+
+struct rdma::hyv_udata_translate* rdma::udata_translate_create(hyv_udata *udata,
+                                                  struct hyv_user_mem **umem,
+                                                  struct hyv_udata_gvm *udata_gvm,
+                                                  uint32_t udata_gvm_num,
+                                                  uint32_t *n_chunks_total)
+{
+    struct uchunks
+    {
+        struct hyv_user_mem_chunk *data;
+        unsigned long n;
+    } *chunks;
+    uint32_t chunks_total = 0;
+    struct hyv_udata_translate *udata_trans_iter;
+    struct hyv_udata_translate *udata_translate;
+    uint32_t i, j;
+    int ret;
+
+    chunks = (struct uchunks*) kmalloc(sizeof(*chunks) * udata_gvm_num, GFP_KERNEL);
+    if (!chunks) {
+        debug("could not allocate chunks\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
+
+    for (i = 0; i < udata_gvm_num; i++) {
+        __u64 *va = (__u64 *)&udata->data[udata_gvm[i].udata_offset];
+        debug("masked va: 0x%llx\n", *va & udata_gvm[i].mask);
+        umem[i] =
+            pin_user_mem(*va & udata_gvm[i].mask, udata_gvm[i].size,
+                     &chunks[i].data, &chunks[i].n, true);
+        if (IS_ERR(umem[i])) {
+            debug("could not pin user memory\n");
+            ret = PTR_ERR(umem[i]);
+            goto fail_pin;
+        }
+
+        chunks_total += chunks[i].n;
+    }
+    *n_chunks_total = chunks_total;
+
+    if (udata_gvm_num) {
+        udata_translate =
+            (hyv_udata_translate*) kmalloc(sizeof(*udata_translate) * udata_gvm_num +
+                sizeof(hyv_user_mem_chunk) * chunks_total,
+                GFP_KERNEL);
+    } else {
+        udata_translate = (hyv_udata_translate*) kmalloc(sizeof(*udata_translate), GFP_KERNEL);
+    }
+    if (!udata_translate) {
+        debug("could not alloc udata translate\n");
+        ret = -ENOMEM;
+        goto fail_pin;
+    }
+
+    udata_trans_iter = udata_translate;
+    for (j = 0; j < udata_gvm_num; j++) {
+        uint32_t n_chunks = chunks[j].n;
+        udata_trans_iter->udata_offset = udata_gvm[j].udata_offset;
+        udata_trans_iter->n_chunks = n_chunks;
+        udata_trans_iter->type = udata_gvm[j].type;
+        memcpy(udata_trans_iter->chunk, chunks[j].data,
+               sizeof(hyv_user_mem_chunk) * n_chunks);
+        udata_trans_iter =
+            (hyv_udata_translate *)&udata_trans_iter->chunk[n_chunks];
+    }
+
+    kfree(chunks);
+
+    return udata_translate;
+fail_pin:
+    // for (j = 0; j < i; j++) {
+    //     hyv_unpin_user_mem(umem[j]);
+    // }
+    kfree(chunks);
+fail:
+    return (hyv_udata_translate*) ERR_PTR(ret);
+}
+
+#define PAGE_ALIGN(addr)        (((addr)+PAGE_SIZE-1) & ~PAGE_MASK)
+#define page_to_pfn(addr)       (virt_to_phys(addr)) >> PAGE_SHIFT
+struct rdma::hyv_user_mem* rdma::pin_user_mem(unsigned long va, unsigned long size, hyv_user_mem_chunk **chunks, unsigned long *n_chunks, bool write)
+{
+    struct hyv_user_mem *umem;
+    unsigned long i, offset, cur_va;
+    unsigned long n_pages, pages_pinned = 0;
+    hyv_user_mem_chunk *chunk_tmp = NULL;
+    struct page **pages;
+    int ret;
+
+    debug("va: 0x%lx, size: %lu, write: %d\n", va, size, write);
+
+    offset = va & PAGE_MASK;
+    n_pages = PAGE_ALIGN(size + offset) >> PAGE_SHIFT;
+
+    debug("n_pages: %lu, offset: 0x%lx\n", n_pages, offset);
+
+    if (n_pages == 0) {
+        ret = -EINVAL;
+        goto fail;
+    }
+
+    pages = (page**) malloc(sizeof(*pages) * n_pages);
+    if (!pages) {
+        debug("could not allocate page array\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
+
+    // TODO: optimize with contiguous pages
+    for (cur_va = va; n_pages != pages_pinned;
+         cur_va += (ret * PAGE_SIZE)) {
+        pages[pages_pinned] = (page*) memory::alloc_page();
+        if (!cur_va) {
+            debug("could not pin pages (%d)\n", ret);
+            ret = -EFAULT;
+            goto fail_get_user;
+        }
+        pages_pinned ++;
+    }
+
+    if (chunks) {
+        *n_chunks = n_pages;
+
+        debug("n_chunks: %lu\n", *n_chunks);
+
+        chunk_tmp = (hyv_user_mem_chunk*) kmalloc(sizeof(*chunk_tmp) * *n_chunks, GFP_KERNEL);
+        if (!chunk_tmp) {
+            debug("could not allocate chunks!\n");
+            ret = -ENOMEM;
+            goto fail_get_user;
+        }
+
+       chunk_tmp[0].addr = (virt_to_phys(pages[0])) + offset;
+       if (n_pages == 1) {
+            chunk_tmp[0].size = size;
+        } else {
+            unsigned long end_offset;
+
+            chunk_tmp[0].size = PAGE_SIZE - offset;
+            for (i = 1; i < n_pages; ++i) {
+                    chunk_tmp[i].addr = virt_to_phys(pages[i]);
+                    chunk_tmp[i].size = PAGE_SIZE;
+            }
+
+            /* cut last chunk to real size */
+            end_offset = ((size - chunk_tmp[0].size) & PAGE_MASK);
+            if (end_offset) {
+                chunk_tmp[n_pages].size -=
+                    PAGE_SIZE - end_offset;
+            }
+        }
+
+//#if DBG_MEM &DPRINT_MASK
+        for (i = 0; i < *n_chunks; i++) {
+            debug("-- chunk[%lu] --\n", i);
+            debug("virt_addr: 0x%llx\n", pages[i]);
+            debug("phys_addr: 0x%llx\n", chunk_tmp[i].addr);
+            debug("size: %llu\n", chunk_tmp[i].size);
+        }
+//#endif
+
+        *chunks = chunk_tmp;
+    }
+
+    umem = (hyv_user_mem*) kmalloc(sizeof(*umem), GFP_KERNEL);
+    if (!umem) {
+        debug("could not allocate user mem struct\n");
+        ret = -ENOMEM;
+        goto fail_chunk;
+    }
+    umem->pages = pages;
+    umem->n_pages = n_pages;
+
+    return umem;
+fail_chunk:
+    kfree(chunk_tmp);
+fail_get_user:
+    for (i = 0; i < pages_pinned; i++) {
+        free(pages[i]);
+    }
+    free(pages);
+fail:
+    return (hyv_user_mem*) ERR_PTR(ret);
+}
+
+
+struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, struct ib_udata *ibudata)
+{
+    hyv_reg_user_mr_result res;
+    hyv_user_mem_chunk *umem_chunks;
+    struct hyv_udata_translate *udata_translate;
+    struct hyv_user_mem *umem;
+    uint32_t n_chunks_total;
+    uint32_t i;
+    unsigned long n_chunks;
+    hyv_udata *udata;
+    bool write;
+    int ret;
+    int udata_gvm_num = 0;
+    struct hyv_udata_gvm *udata_gvm = NULL;
+
+    debug("vrdma_reg_user_mr\n");
+
+    BUG_ON(user_va != io_va);
+
+    write = !!(access & ~IB_ACCESS_REMOTE_READ);
+
+    hmr = (hyv_mr*) kmalloc(sizeof(*hmr), GFP_KERNEL);
+    if (!hmr) {
+        debug("could not allocate mr\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
+
+    umem = pin_user_mem(user_va, size, &umem_chunks, &n_chunks, write);
+    if (IS_ERR(umem)) {
+        debug("could not pin user memory\n");
+        ret = PTR_ERR(umem);
+        goto fail_mr;
+    }
+
+    udata = udata_create(ibudata);
+    if (IS_ERR(udata)) {
+        debug( "pre udata failed!\n");
+        ret = PTR_ERR(udata);
+        goto fail_pin;
+    }
+
+    hmr->n_umem = udata_gvm_num;
+
+    hmr->umem = (hyv_user_mem**) kmalloc(sizeof(*hmr->umem) * (udata_gvm_num + 1), GFP_KERNEL);
+    if (!hmr->umem) {
+        debug("could not allocate umem\n");
+        ret = -ENOMEM;
+        goto fail_udata;
+    }
+    hmr->umem[0] = umem;
+
+    udata_translate = udata_translate_create(
+        udata, hmr->umem + 1, udata_gvm, udata_gvm_num, &n_chunks_total);
+    if (IS_ERR(udata_translate)) {
+        debug("could not translate udata\n");
+        ret = PTR_ERR(udata_translate);
+        goto fail_umem;
+    }
+
+    {
+        int ret, result;
+        const struct hcall_parg pargs[] = { { umem_chunks, (uint32_t) (n_chunks * sizeof(*umem_chunks)) } ,
+                                            { udata, (uint32_t) (sizeof(*udata) + (uint32_t) ( udata->in + udata->out)) } ,
+                                            { 	udata_translate,
+                                                (uint32_t) (sizeof(*udata_translate) * (udata_gvm_num ? udata_gvm_num : 1)) + \
+                                                (uint32_t) (sizeof(hyv_user_mem_chunk) * n_chunks_total) } ,
+                                            };
+        struct _args_t {
+            struct rdma::hyv_ibv_reg_user_mrX_copy_args copy_args;
+            struct rdma::vrdma_hypercall_result result;
+        } *_args;
+
+        _args = (struct _args_t *) malloc(sizeof(*_args));
+
+        if (!_args) { ret = -12; }
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_REG_USER_MR, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST};
+
+        memcpy(&_args->copy_args.pd_handle, &hpd->host_handle, sizeof(hpd->host_handle));
+        memcpy(&_args->copy_args.user_va, &user_va, sizeof(user_va));
+        memcpy(&_args->copy_args.size, &size, sizeof(size));
+        memcpy(&_args->copy_args.access, &access, sizeof(access));
+
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr,
+                            sizeof(_args->copy_args), pargs, (sizeof (pargs) / sizeof ((pargs)[0])),
+                            &_args->result.hdr, 16);
+
+        debug("as;kfj;sakdfj ret: %d\n", ret);
+        if (!ret)
+            memcpy(&result, &_args->result.value, sizeof(result));
+
+        free(_args);
+        return (ib_mr*) ERR_PTR(ret);
+    }
+    if (ret || res.mr_handle < 0) {
+        debug("could not reg user mr on host\n");
+        ret = ret ? ret : res.mr_handle;
+        goto fail_udata_translate;
+    }
+    hmr->access = access;
+    hmr->host_handle = res.mr_handle;
+    hmr->ibmr.lkey = res.lkey;
+    hmr->ibmr.rkey = res.rkey;
+
+    // udata_translate_destroy(udata_translate);
+
+    kfree(umem_chunks);
+
+    ret = udata_copy_out(udata, ibudata);
+    kfree(udata);
+    if (ret) {
+        debug("could not copy response\n");
+//        hyv_ibv_dereg_mr(&hmr->ibmr);
+        ret = -EFAULT;
+        goto fail;
+    }
+
+    return &hmr->ibmr;
+fail_udata_translate:
+    for (i = 0; i < hmr->n_umem; i++) {
+        //hyv_unpin_user_mem(hmr->umem[i]);
+    }
+    //udata_translate_destroy(udata_translate);
+fail_umem:
+    kfree(hmr->umem);
+fail_udata:
+    kfree(udata);
+fail_pin:
+    kfree(umem_chunks);
+    //hyv_unpin_user_mem(umem);
+fail_mr:
+    kfree(hmr);
+fail:
+    return (ib_mr*)ERR_PTR(ret);
+}
 
 }

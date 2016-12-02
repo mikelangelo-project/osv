@@ -188,8 +188,16 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
 
     struct hyv_ibv_alloc_pdX_copy_args {
         struct hcall_header hdr;
-        uint32_t uctx_handle; };
+        uint32_t uctx_handle;
+    };
 
+    struct hyv_ibv_reg_user_mrX_copy_args {
+        struct hcall_header hdr;
+        uint32_t pd_handle;
+        uint64_t user_va;
+        uint64_t size;
+        int32_t access;
+    };
 
     struct hcall
     {
@@ -272,9 +280,11 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         void *priv;
     };
 
-
-    struct hyv_udata* udata_create(struct ib_udata *ibudata);
-    int udata_copy_out(hyv_udata *udata, struct ib_udata *ibudata);
+    struct hyv_user_mem
+    {
+        struct page **pages;
+        unsigned long n_pages;
+    };
 
     struct hyv_cq
     {
@@ -312,17 +322,102 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         void *priv;
     };
 
-    struct hyv_device hyv_dev;
-    struct hyv_ucontext *hyv_uctx;
-    struct hyv_pd *hpd;
+    struct hyv_mr
+    {
+        struct hlist_node node;
 
+        struct ib_mr ibmr;
 
+        /* we need this for kverbs dma mrs */
+        u64 iova;
+        u64 size;
+        int access;
+
+        struct hyv_user_mem **umem;
+        unsigned long n_umem;
+
+        uint32_t host_handle;
+
+        void *priv;
+    };
+
+    struct hyv_user_mem_chunk
+    {
+        uint64_t addr;
+        uint64_t size;
+    };
+
+    typedef struct
+    {
+        int32_t mr_handle;
+        uint32_t lkey;
+        uint32_t rkey;
+    } hyv_reg_user_mr_result;
+
+    struct hyv_udata_translate
+    {
+        uint32_t type;
+        uint32_t udata_offset;
+        uint32_t n_chunks;
+        hyv_user_mem_chunk chunk[0];
+    };
+
+    enum hyv_udata_gvm_type {
+        HYV_IB_UMEM,
+        HYV_COPY_FROM_GUEST,
+        HYV_COPY_TO_GUEST
+    };
+
+    struct hyv_udata_gvm
+    {
+        enum hyv_udata_gvm_type type;
+
+        /* offset into user cmd */
+        unsigned long udata_offset;
+        unsigned long mask;
+        unsigned long size;
+    };
+
+    struct hyv_mmap
+    {
+        struct list_head list;
+
+        void *addr;
+        size_t size;
+        uint32_t key;
+
+        bool mapped;
+        uint32_t host_handle;
+    };
+
+    struct virtmlx4_ucontext
+    {
+        struct hyv_mmap *uar_mmap;
+        struct hyv_mmap *bf_mmap;
+    };
+
+    struct hyv_udata_translate* udata_translate_create(hyv_udata *udata,
+                                                       struct hyv_user_mem **umem,
+                                                       struct hyv_udata_gvm *udata_gvm,
+                                                       uint32_t udata_gvm_num,
+                                                       uint32_t *n_chunks_total);
+    struct hyv_udata* udata_create(struct ib_udata *ibudata);
+    int udata_copy_out(hyv_udata *udata, struct ib_udata *ibudata);
+    void hyv_mmap_unprepare(struct ib_ucontext *ibuctx, struct hyv_mmap *mm);
+    struct hyv_user_mem* pin_user_mem(unsigned long va, unsigned long size, hyv_user_mem_chunk **chunks, unsigned long *n_chunks, bool write);
     // implementations of the verb calls using hypercall
     int vrdma_open_device(int *result);
     int vrdma_query_device(ib_uverbs_query_device_resp *attr, int *result);
     int vrdma_query_port(ib_uverbs_query_port_resp *attr, int port_num, int *result);
     struct ib_ucontext *vrdma_alloc_ucontext(struct ib_udata *ibudata);
     struct ib_pd* vrdma_alloc_pd(struct ib_udata *ibudata);
+    struct ib_mr* vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, struct ib_udata *ibudata);
+
+
+    struct hyv_device hyv_dev;
+    struct hyv_ucontext *hyv_uctx;
+    struct hyv_pd *hpd;
+    struct hyv_mr *hmr;
 
 private:
     void handle_event();
