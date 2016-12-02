@@ -975,7 +975,7 @@ struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, s
                                             };
         struct _args_t {
             struct rdma::hyv_ibv_reg_user_mrX_copy_args copy_args;
-            struct rdma::vrdma_hypercall_result result;
+            struct rdma::vrdma_hypercall_result64 result; // ibv_reg_mr_resp
         } *_args;
 
         _args = (struct _args_t *) malloc(sizeof(*_args));
@@ -991,9 +991,7 @@ struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, s
 
         ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr,
                             sizeof(_args->copy_args), pargs, (sizeof (pargs) / sizeof ((pargs)[0])),
-                            &_args->result.hdr, 16);
-
-        debug("as;kfj;sakdfj ret: %d\n", ret);
+                            &_args->result.hdr, sizeof(_args->result));
         if (!ret)
             memcpy(&result, &_args->result.value, sizeof(result));
 
