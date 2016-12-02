@@ -35,6 +35,7 @@ rdma::rdma(pci::device& pci_dev)
     _vg = (struct virtio_hyv*) malloc(sizeof(*_vg));
     if (!_vg) {
         debug("vRDMA: Could not allocate memory\n");
+        return;
     }
 
     _vg->vdev = &pci_dev;
@@ -482,7 +483,7 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
         _args = (struct _args_t *) malloc(sizeof(*_args));
 
         if (!_args)
-        { ret = -12; }
+        { ret = -ENOMEM; }
 
         _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_ALLOC_UCTX, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
 
@@ -575,7 +576,7 @@ int rdma::vrdma_open_device(int *result)
 
     _args = (struct _args_t *) malloc(sizeof(*_args));
     if (!_args) {
-        return -12; // what is -12 here? probably ENOMEM??
+        return -ENOMEM;
     }
 
     _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_GET_IB_DEV, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
@@ -636,7 +637,7 @@ int rdma::vrdma_query_port(ib_uverbs_query_port_resp *attr, int port_num, int *r
     _args = (struct _args_t *) malloc(sizeof(*_args));
 
     if (!_args)
-        return -12;
+        return -ENOMEM;
 
     _args->copy_args.hdr = (struct rdma::hcall_header) { VIRTIO_HYV_IBV_QUERY_PORT, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
     memcpy(&_args->copy_args.dev_handle, &hyv_dev.host_handle, sizeof(hyv_dev.host_handle));
@@ -675,7 +676,7 @@ struct ib_pd* rdma::vrdma_alloc_pd(struct ib_udata *ibudata)
         struct _args_t { struct hyv_ibv_alloc_pdX_copy_args copy_args; struct vrdma_hypercall_result result; } *_args;
         _args = (struct _args_t *) malloc(sizeof(*_args));
 
-        if (!_args) { ret = -12; }
+        if (!_args) { ret = -ENOMEM; }
 
         _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_ALLOC_PD, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
         memcpy(&_args->copy_args.uctx_handle, &hyv_uctx->host_handle, sizeof(hyv_uctx->host_handle));
@@ -980,7 +981,7 @@ struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, s
 
         _args = (struct _args_t *) malloc(sizeof(*_args));
 
-        if (!_args) { ret = -12; }
+        if (!_args) { ret = -ENOMEM; }
 
         _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_REG_USER_MR, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST};
 
