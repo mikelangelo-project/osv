@@ -8,6 +8,7 @@
 #include <osv/mempool.hh>
 #include <osv/interrupt.hh>
 #include <osv/sched.hh>
+#include <osv/ilog2.hh>
 #include <linux/err.h>
 #include "drivers/virtio-rdma.hh"
 
@@ -533,7 +534,9 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
         ret = PTR_ERR(vuctx->uar_mmap);
         goto fail_vuctx;
     }
+    spin_lock(&hyv_uctx->mmap_lock);
     list_add_tail(&vuctx->uar_mmap->list, &hyv_uctx->mmap_list);
+    spin_unlock(&hyv_uctx->mmap_lock);
 
     vuctx->bf_mmap = (hyv_mmap*) kmalloc(sizeof(*vuctx->uar_mmap), GFP_KERNEL);
     vuctx->bf_mmap->addr = memory::alloc_page();
@@ -545,7 +548,14 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
         ret = PTR_ERR(vuctx->bf_mmap);
         goto fail_uar_mmap;
     }
+    spin_lock(&hyv_uctx->mmap_lock);
     list_add_tail(&vuctx->uar_mmap->list, &hyv_uctx->mmap_list);
+    spin_unlock(&hyv_uctx->mmap_lock);
+
+    // TODO
+    // get the vma of vuctx->uar_mmap
+// hyv_ibv_mmap(vuctx->uar_mmap);
+
 
     return &hyv_uctx->ibuctx;
 fail_uar_mmap:
@@ -1040,5 +1050,137 @@ fail_mr:
 fail:
     return (ib_mr*)ERR_PTR(ret);
 }
+
+static inline unsigned int roundup_pow_of_two(unsigned int x)
+{
+    return 1UL << fls(x - 1);
+}
+#define MLX4_CQ_ENTRY_SIZE 0x20
+struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ibudata)
+{
+    struct hyv_udata_gvm udata_gvm[2];
+    struct mlx4_ib_create_cq ucmd;
+    int ret;
+    hyv_udata_translate *udata_translate;
+    hyv_create_cq_result result;
+    hyv_udata *udata;
+    uint32_t n_chunks_total;
+    uint32_t udata_gvm_num;
+
+    debug("vrdma_create_cq\n");
+
+    BUG_ON(!ibuctx);
+
+    memcpy(&ucmd, udata, sizeof(ucmd));
+    // if (ret) {
+    //     debug("copy from udata failed\n");
+    //     goto fail;
+    // }
+
+    // entries = roundup_pow_of_two(entries + 1);
+    entries = (1UL << fls((entries + 1) - 1));
+
+    udata_gvm[0].udata_offset = offsetof(struct mlx4_ib_create_cq, buf_addr);
+    udata_gvm[0].mask = ~0UL;
+    udata_gvm[0].size = PAGE_ALIGN(MLX4_CQ_ENTRY_SIZE * entries);
+    udata_gvm[0].type = HYV_IB_UMEM;
+
+    udata_gvm[1].udata_offset = offsetof(struct mlx4_ib_create_cq, db_addr);
+    udata_gvm[1].mask = PAGE_MASK;
+    udata_gvm[1].size = PAGE_SIZE;
+    udata_gvm[1].type = HYV_IB_UMEM;
+
+    udata_gvm_num = ARRAY_SIZE(udata_gvm);
+    debug("udata_gvm_num: %d\n", udata_gvm_num);
+    hcq = (hyv_cq*) kmalloc(sizeof(*hcq), GFP_KERNEL);
+    if (!hcq) {
+        debug("could not allocate cq\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
+
+    udata = udata_create(ibudata);
+    if (IS_ERR(udata)) {
+        ret = PTR_ERR(udata);
+        goto fail_cq;
+    }
+
+    hcq->n_umem = udata_gvm_num;
+
+    hcq->umem = (hyv_user_mem**) kmalloc(sizeof(*hcq->umem) * udata_gvm_num, GFP_KERNEL);
+    if (!hcq->umem) {
+        debug("could not allocate umem\n");
+        ret = -ENOMEM;
+        goto fail_udata;
+    }
+
+    udata_translate = udata_translate_create(udata, hcq->umem, udata_gvm, udata_gvm_num, &n_chunks_total);
+    if (IS_ERR(udata_translate)) {
+        debug("could not translate udata\n");
+        ret = PTR_ERR(udata_translate);
+        goto fail_umem;
+    }
+
+    {
+        const struct hcall_parg pargs[] = { { udata, (uint32_t) (sizeof(*udata) + (uint32_t) ( udata->in + udata->out)) } ,
+                                            { 	udata_translate,
+                                                (uint32_t) (sizeof(*udata_translate) * (udata_gvm_num ? udata_gvm_num : 1)) + \
+                                                (uint32_t) (sizeof(hyv_user_mem_chunk) * n_chunks_total) } ,
+                                            };
+        struct _args_t { struct hyv_ibv_create_cqX_copy_args copy_args; struct vrdma_hypercall_result result; } *_args;
+
+        _args = (struct _args_t *) malloc(sizeof(*_args));
+
+        if (!_args) { ret = -ENOMEM; goto fail_udata_translate;}
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_CREATE_CQ, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+        memcpy(&_args->copy_args.guest_handle, hcq, sizeof(*hcq));
+        memcpy(&_args->copy_args.uctx_handle, &hyv_uctx->host_handle, sizeof(hyv_uctx->host_handle));
+        memcpy(&_args->copy_args.entries, &entries, sizeof(entries));
+        memcpy(&_args->copy_args.vector, &vector, sizeof(vector));
+
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args), pargs,
+                            (sizeof (pargs) / sizeof ((pargs)[0])), &_args->result.hdr, 12);
+        if (!ret)
+            memcpy(&result, &_args->result.value, sizeof(result));
+
+        free(_args);
+    }
+    if (ret || result.cq_handle < 0) {
+        debug("could not create cq on host\n");
+        ret = ret ? ret : result.cq_handle;
+        goto fail_udata_translate;
+    }
+    hcq->host_handle = result.cq_handle;
+    hcq->ibcq.cqe = result.cqe;
+
+    // udata_translate_destroy(udata_translate);
+
+    ret = udata_copy_out(udata, ibudata);
+    // udata_destroy(udata);
+    free(udata);
+    if (ret) {
+        goto fail_create;
+    }
+
+    return &hcq->ibcq;
+fail_udata_translate:
+    // for (i = 0; i < cq->n_umem; i++) {
+    //     hyv_unpin_user_mem(cq->umem[i]);
+    // }
+    // udata_translate_destroy(udata_translate);
+fail_umem:
+    kfree(hcq->umem);
+fail_udata:
+    // udata_destroy(udata);
+    free(udata);
+fail_cq:
+    kfree(hcq);
+fail_create:
+    // hyv_ibv_destroy_cq(&hcq->ibcq);
+fail:
+    return (ib_cq*) ERR_PTR(ret);
+}
+
 
 }

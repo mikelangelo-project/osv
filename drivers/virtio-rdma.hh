@@ -13,6 +13,7 @@
 #include <asm/atomic.h>
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_user_verbs.h>
+#include <mlx4/user.h>
 #include "drivers/virtio.hh"
 #include "drivers/device.hh"
 
@@ -202,6 +203,14 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         uint64_t user_va;
         uint64_t size;
         int32_t access;
+    };
+
+    struct hyv_ibv_create_cqX_copy_args {
+        struct hcall_header hdr;
+        uint64_t guest_handle;
+        uint32_t uctx_handle;
+        int32_t entries;
+        int32_t vector;
     };
 
     struct hcall
@@ -401,6 +410,12 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         struct hyv_mmap *bf_mmap;
     };
 
+    typedef struct
+    {
+        int32_t cq_handle;
+        int32_t cqe;
+    } hyv_create_cq_result;
+
     struct hyv_udata_translate* udata_translate_create(hyv_udata *udata,
                                                        struct hyv_user_mem **umem,
                                                        struct hyv_udata_gvm *udata_gvm,
@@ -417,12 +432,13 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     struct ib_ucontext *vrdma_alloc_ucontext(struct ib_udata *ibudata);
     struct ib_pd* vrdma_alloc_pd(struct ib_udata *ibudata);
     struct ib_mr* vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, struct ib_udata *ibudata);
-
+    struct ib_cq* vrdma_create_cq(int entries, int vector, struct ib_udata *udata);
 
     struct hyv_device hyv_dev;
     struct hyv_ucontext *hyv_uctx;
     struct hyv_pd *hpd;
     struct hyv_mr *hmr;
+    struct hyv_cq *hcq;
 
 private:
     void handle_event();
