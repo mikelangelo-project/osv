@@ -90,8 +90,13 @@ rdma *rdma_drv = rdma::instance();
 
 static void init_uobj(struct ib_uobject *uobj, u64 user_handle)
 {
+	debug("test 0\n");
+	debug("user_handle: %p\n", user_handle);
+	debug("uobj->user_handle: %p\n", uobj->user_handle);
 	uobj->user_handle = user_handle;
+	debug("test 1\n");
 	uobj->context     = &rdma_drv->hyv_uctx->ibuctx;
+	debug("test 2\n");
 	uobj->live        = 0;
 }
 
@@ -259,6 +264,8 @@ int ibv_cmd_query_port(struct ibv_context *context, uint8_t port_num,
 	}
 
 	ret = rdma_drv->vrdma_query_port(attr, port_num, &hret);
+	debug("ret: %d\n", ret);
+	debug("hret: %d\n", hret);
 	if (ret || hret) {
 		debug("could not query port on host\n");
 		kfree(attr);
@@ -439,28 +446,93 @@ int ibv_cmd_create_cq(struct ibv_context *context, int cqe,
 		      struct ibv_create_cq *cmd, size_t cmd_size,
 		      struct ibv_create_cq_resp *resp, size_t resp_size)
 {
-	// dprint(DBG_IBV, "\n");
+	debug("ibv_cmd_create_cq\n");
 	// if (abi_ver <= 2)
 	// 	return ibv_cmd_create_cq_v2(context, cqe, cq,
 	// 				    cmd, cmd_size, resp, resp_size);
 
+	// we don't need to set the in/out sizes
 	// IBV_INIT_CMD_RESP(cmd, cmd_size, CREATE_CQ, resp, resp_size);
-	// cmd->user_handle   = (uintptr_t) cq;
-	// cmd->cqe           = cqe;
-	// cmd->comp_vector   = comp_vector;
-	// cmd->comp_channel  = channel ? channel->fd : -1;
-	// cmd->reserved      = 0;
 
-	// if (write(context->cmd_fd, cmd, cmd_size) != cmd_size)
-	// 	return errno;
+	struct ib_uverbs_create_cq      kcmd;
+	struct ib_uverbs_create_cq_resp kresp;
+	struct ib_udata                 ibudata;
+	struct ib_ucq_object           *ucqobj;
+	struct ib_uverbs_event_file    *ev_file = NULL;
+	struct ib_cq                   *ibcq;
+	int ret;
 
-	// VALGRIND_MAKE_MEM_DEFINED(resp, resp_size);
+	debug("ibv_cmd_create_cq 1\n");
+	kcmd.user_handle   = (uintptr_t) cq;
+	kcmd.cqe           = cqe;
+	kcmd.comp_vector   = comp_vector;
+	kcmd.comp_channel  = channel ? channel->fd : -1;
+	kcmd.reserved      = 0;
 
-	// cq->handle  = resp->cq_handle;
-	// cq->cqe     = resp->cqe;
-	// cq->context = context;
+	debug("ibv_cmd_create_cq 2\n");
 
-	return 0;
+	INIT_UDATA(&ibudata, cmd + sizeof(kcmd),
+			   kcmd.response + sizeof(kresp),
+			   cmd_size - sizeof(kcmd), /*cmd_size = in_len*/
+			   resp_size - sizeof(kresp)); /*resp_size = out_len*/
+
+	if (kcmd.comp_vector >= context->num_comp_vectors) {
+		ret = -EINVAL;
+		goto err;
+	}
+
+	debug("ibv_cmd_create_cq 3\n");
+	ucqobj = (ib_ucq_object*) kmalloc(sizeof *ucqobj, GFP_KERNEL);
+	if (!ucqobj) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	init_uobj(&ucqobj->uobject, (u64) kcmd.user_handle);
+
+	debug("ibv_cmd_create_cq 4\n");
+	//obj->uverbs_file	   = file;
+	ucqobj->comp_events_reported  = 0;
+	ucqobj->async_events_reported = 0;
+	INIT_LIST_HEAD(&ucqobj->comp_list);
+	INIT_LIST_HEAD(&ucqobj->async_list);
+
+	debug("ibv_cmd_create_cq 5\n");
+	ibcq = rdma_drv->vrdma_create_cq(kcmd.cqe, kcmd.comp_vector, &ibudata);
+	if (IS_ERR(ibcq)) {
+		ret = PTR_ERR(ibcq);
+		goto err_file;
+	}
+
+	//cq->device        = file->device->ib_dev;
+	ibcq->uobject       = &ucqobj->uobject;
+	// TODO
+	// ibcq->comp_handler  = ib_uverbs_comp_handler;
+	// ibcq->event_handler = ib_uverbs_cq_event_handler;
+	ibcq->cq_context    = ev_file;
+	atomic_set(&ibcq->usecnt, 0);
+
+	memset(&resp, 0, sizeof kresp);
+	kresp.cq_handle = ucqobj->uobject.id;
+	kresp.cqe       = cq->cqe;
+
+	cq->handle  = resp->cq_handle;
+	cq->cqe     = resp->cqe;
+	cq->context = context;
+
+err_copy:
+	// idr_remove_uobj(&ib_uverbs_cq_idr, &obj->uobject);
+
+err_free:
+	// ib_destroy_cq(ibcq);
+
+err_file:
+	// if (ev_file)
+	// 	ib_uverbs_release_ucq(file, ev_file, ucqobj);
+
+err:
+	// put_uobj_write(&ucqobj->uobject);
+	return ret;
 }
 
 int ibv_cmd_poll_cq(struct ibv_cq *ibcq, int ne, struct ibv_wc *wc)
