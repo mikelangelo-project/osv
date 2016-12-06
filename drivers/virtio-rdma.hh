@@ -187,6 +187,26 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         int64_t value;
     };
 
+    struct hyv_mmap_copy_args {
+        struct hcall_header hdr;
+        __u32 uctx_handle;
+        __u64 phys_addr;
+        __u32 size;
+        __u64 vm_flags;
+        __u64 vm_pgoff;
+    };
+
+    typedef struct
+    {
+     __s32 mmap_handle;
+     __u64 pgprot;
+    } hyv_mmap_result_t;
+
+    struct hyv_mmap_result {
+        struct hcall_ret_header hdr;
+        hyv_mmap_result_t value;
+    };
+
     struct hyv_ibv_alloc_ucontextX_copy_args {
         struct hcall_header hdr;
         int32_t dev_handle;
@@ -211,6 +231,11 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         uint32_t uctx_handle;
         int32_t entries;
         int32_t vector;
+    };
+
+    struct hyv_munmap_copy_args {
+        struct hcall_header hdr;
+        __u32 mmap_handle;
     };
 
     struct hcall
@@ -410,6 +435,13 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         struct hyv_mmap *bf_mmap;
     };
 
+    enum mlx4_ib_mmap_cmd {
+        MLX4_IB_MMAP_UAR_PAGE = 0,
+        MLX4_IB_MMAP_BLUE_FLAME_PAGE = 1,
+        MLX4_IB_MMAP_GET_CONTIGUOUS_PAGES = 2,
+        MLX4_IB_MMAP_GET_HW_CLOCK = 3,
+    };
+
     typedef struct
     {
         int32_t cq_handle;
@@ -423,8 +455,13 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
                                                        uint32_t *n_chunks_total);
     struct hyv_udata* udata_create(struct ib_udata *ibudata);
     int udata_copy_out(hyv_udata *udata, struct ib_udata *ibudata);
-    void hyv_mmap_unprepare(struct ib_ucontext *ibuctx, struct hyv_mmap *mm);
-    struct hyv_user_mem* pin_user_mem(unsigned long va, unsigned long size, hyv_user_mem_chunk **chunks, unsigned long *n_chunks, bool write);
+    struct hyv_mmap* mmap_prepare(uint32_t size, uint32_t key);
+    void mmap_unprepare(struct hyv_mmap *mm);
+    struct hyv_user_mem* pin_user_mem(unsigned long va, unsigned long size,
+                                      hyv_user_mem_chunk **chunks, unsigned long *n_chunks, bool write);
+    int vrdma_mmap(struct hyv_mmap *mm);
+    int vrdma_unmap(struct hyv_mmap *mm);
+
     // implementations of the verb calls using hypercall
     int vrdma_open_device(int *result);
     int vrdma_query_device(ib_uverbs_query_device_resp *attr, int *result);

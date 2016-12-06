@@ -6,6 +6,7 @@
  */
 
 #include <osv/mempool.hh>
+#include <osv/mmu.hh>
 #include <osv/interrupt.hh>
 #include <osv/sched.hh>
 #include <osv/ilog2.hh>
@@ -432,15 +433,160 @@ hw_driver* rdma::probe(hw_device* dev)
     return virtio::probe<rdma, VIRTIO_RDMA_DEVICE_ID>(dev);
 }
 
-void rdma::hyv_mmap_unprepare(struct ib_ucontext *ibuctx, struct hyv_mmap *mm)
+struct rdma::hyv_mmap* rdma::mmap_prepare(uint32_t size, uint32_t key)
+{
+    struct hyv_mmap *gmm;
+    int ret;
+
+    debug("mmap_prepare\n");
+
+    gmm = (hyv_mmap*) kmalloc(sizeof(struct hyv_mmap), GFP_KERNEL);
+    if (!gmm) {
+        debug("could not allocate mmap struct\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
+
+    gmm->addr = malloc(size);
+    gmm->key = key;
+    gmm->size = size;
+    gmm->mapped = false;
+    if (!gmm->addr) {
+        debug("could not allocate buffer\n");
+        ret = PTR_ERR(gmm->addr);
+        goto fail_gmm;
+    }
+    spin_lock(&hyv_uctx->mmap_lock);
+    list_add_tail(&gmm->list, &hyv_uctx->mmap_list);
+    spin_unlock(&hyv_uctx->mmap_lock);
+
+    return gmm;
+fail_gmm:
+    kfree(gmm);
+fail:
+    return (hyv_mmap*) ERR_PTR(ret);
+
+}
+
+void rdma::mmap_unprepare(struct hyv_mmap *mm)
 {
     spin_lock(&hyv_uctx->mmap_lock);
     list_del(&mm->list);
     spin_unlock(&hyv_uctx->mmap_lock);
 
-    //hyv_unmap(ibuctx, mm);
+    vrdma_unmap(mm);
 }
 
+int rdma::vrdma_mmap(struct hyv_mmap *gmm)
+{
+    int ret = 0;
+    hyv_mmap_result_t result;
+    unsigned long phys_addr;
+    //unsigned long prot;
+    uint32_t vm_pgoff = gmm->key >> PAGE_SHIFT;
+    uint64_t vm_flags = 0xFA;
+    hyv_mmap *mm;
+
+    debug("vrdma_mmap\n");
+
+    debug("pgoff: 0x%lx, key: 0x%x, len: %lu, vm_pgoff: %lu\n", vm_pgoff, gmm->key, gmm->size, vm_pgoff);
+
+    // remove the mm from the mmap list
+    spin_lock(&hyv_uctx->mmap_lock);
+    list_for_each_entry(mm, &hyv_uctx->mmap_list, list)
+    {
+        if (mm->key == gmm->key) {
+            list_del(&mm->list);
+        }
+    }
+    spin_unlock(&hyv_uctx->mmap_lock);
+
+    phys_addr = virt_to_phys(gmm->addr);
+
+    {
+        int ret;
+        const struct hcall_parg pargs[] = { };
+        struct _args_t {
+            struct hyv_mmap_copy_args copy_args;
+            struct hyv_mmap_result result;
+        } *_args;
+
+        _args = (_args_t*) malloc(sizeof(*_args));
+        memset(_args, 0, sizeof(*_args));
+
+        if (!_args) { ret = -ENOMEM; }
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_MMAP, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+
+        memcpy(&_args->copy_args.uctx_handle, &hyv_uctx->host_handle, sizeof(hyv_uctx->host_handle));
+        memcpy(&_args->copy_args.phys_addr, &phys_addr, sizeof(phys_addr));
+        memcpy(&_args->copy_args.size, &gmm->size, sizeof(gmm->size));
+        memcpy(&_args->copy_args.vm_flags, &vm_flags, sizeof(vm_flags));
+        memcpy(&_args->copy_args.vm_pgoff, &vm_pgoff, sizeof(vm_pgoff));
+
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr,
+                            sizeof(_args->copy_args), pargs,
+                            sizeof(pargs) / sizeof((pargs)[0]),
+                            &_args->result.hdr, sizeof(_args->result));
+
+        if (!ret)
+            memcpy(&result, &_args->result.value, sizeof(result));
+        kfree(_args);
+    }
+    if (ret || result.mmap_handle < 0 ) {
+        debug("could not mmap on host\n");
+        ret = ret ? ret : result.mmap_handle;
+        goto fail;
+    }
+
+    gmm->host_handle = result.mmap_handle;
+    gmm->mapped = true;
+
+fail:
+    return ret;
+}
+
+int rdma::vrdma_unmap(struct hyv_mmap *mm)
+{
+    int ret = 0, result;
+
+    debug("vrdma_unmap\n");
+
+    if (mm->mapped) {
+        {
+            const struct hcall_parg pargs[] = { };
+            struct _args_t {
+                struct hyv_munmap_copy_args copy_args;
+                struct vrdma_hypercall_result result;
+            } *_args;
+
+            _args = (_args_t*)kmalloc(sizeof(*_args), mem_flags);
+
+            if (!_args) { ret = -ENOMEM; }
+
+            _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_MUNMAP, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+
+            memcpy(&_args->copy_args.mmap_handle, &mm->host_handle, sizeof(mm->host_handle));
+
+            ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr,
+                                sizeof(_args->copy_args), pargs,
+                                sizeof(pargs) / sizeof((pargs)[0]),
+                                &_args->result.hdr, sizeof(_args->result));
+
+            if (!ret) memcpy(&result, &_args->result.value, sizeof(result));
+            kfree(_args);
+        }
+
+        if (ret || result) {
+            debug("could not unmap on host\n");
+            ret = ret ? ret : result;
+        }
+    }
+
+    // free_pages_exact(mm->addr, mm->size);
+    kfree(mm);
+    return ret;
+}
 // Implementations of verb calls using hypercall
 
 struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
@@ -488,7 +634,8 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
 
         _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_ALLOC_UCTX, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
 
-        memcpy(&_args->copy_args.dev_handle, &hyv_dev.host_handle, sizeof(hyv_dev.host_handle)); ;
+        memcpy(&_args->copy_args.dev_handle, &hyv_dev.host_handle, sizeof(hyv_dev.host_handle));
+
         ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr,
                             sizeof(_args->copy_args), pargs,
                             (sizeof (pargs) / sizeof ((pargs)[0])),
@@ -524,47 +671,36 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
     }
     hyv_uctx->priv = vuctx;
 
-    vuctx->uar_mmap = (hyv_mmap*) kmalloc(sizeof(struct hyv_mmap), GFP_KERNEL);
-    vuctx->uar_mmap->addr = memory::alloc_page();
-    vuctx->uar_mmap->key = 0; //MLX4_IB_MMAP_UAR_PAGE;
-    vuctx->uar_mmap->size = PAGE_SIZE;
-    vuctx->uar_mmap->mapped = false;
+    vuctx->uar_mmap = mmap_prepare(PAGE_SIZE, MLX4_IB_MMAP_UAR_PAGE);
     if (IS_ERR(vuctx->uar_mmap)) {
         debug("could not prepare uar mmap\n");
         ret = PTR_ERR(vuctx->uar_mmap);
         goto fail_vuctx;
     }
-    spin_lock(&hyv_uctx->mmap_lock);
-    list_add_tail(&vuctx->uar_mmap->list, &hyv_uctx->mmap_list);
-    spin_unlock(&hyv_uctx->mmap_lock);
 
-    vuctx->bf_mmap = (hyv_mmap*) kmalloc(sizeof(*vuctx->uar_mmap), GFP_KERNEL);
-    vuctx->bf_mmap->addr = memory::alloc_page();
-    vuctx->bf_mmap->key = 1; //MLX4_IB_MMAP_BLUE_FLAME_PAGE
-    vuctx->bf_mmap->size = PAGE_SIZE;
-    vuctx->bf_mmap->mapped = false;
-    if (IS_ERR(vuctx->bf_mmap)) {
+    vuctx->bf_mmap = mmap_prepare(PAGE_SIZE, MLX4_IB_MMAP_BLUE_FLAME_PAGE << PAGE_SHIFT);
+    if (IS_ERR(vuctx->uar_mmap)) {
         debug("could not prepare bf mmap\n");
-        ret = PTR_ERR(vuctx->bf_mmap);
+        ret = PTR_ERR(vuctx->uar_mmap);
         goto fail_uar_mmap;
     }
-    spin_lock(&hyv_uctx->mmap_lock);
-    list_add_tail(&vuctx->uar_mmap->list, &hyv_uctx->mmap_list);
-    spin_unlock(&hyv_uctx->mmap_lock);
 
-    // TODO
-    // get the vma of vuctx->uar_mmap
-// hyv_ibv_mmap(vuctx->uar_mmap);
-
+    // do mmap on the host
+    ret = vrdma_mmap(vuctx->uar_mmap);
+	if (ret) {
+        debug("could not remap pfn range\n");
+        goto fail;
+    }
 
     return &hyv_uctx->ibuctx;
 fail_uar_mmap:
-//hyv_mmap_unprepare(ibuctx, vuctx->uar_mmap);
+    mmap_unprepare(vuctx->uar_mmap);
+fail_vuctx:
+    kfree(vuctx);
+fail_uctx:
+    kfree(hyv_uctx);
 fail_udata:
     kfree(udata);
-fail_uctx:
-fail_vuctx:
-    kfree(hyv_uctx);
 fail:
     return (ib_ucontext*) ERR_PTR(ret);
 
