@@ -77,6 +77,17 @@ struct ibv_abi_compat_v2 {
 	pthread_mutex_t		in_use;
 };
 
+
+struct ib_ucq_object {
+	struct ib_uobject	uobject;
+	struct ib_uverbs_file  *uverbs_file;
+	struct list_head	comp_list;
+	struct list_head	async_list;
+	u32			comp_events_reported;
+	u32			async_events_reported;
+};
+
+
 extern HIDDEN int abi_ver;
 
 HIDDEN int ibverbs_init(struct ibv_device ***list);
