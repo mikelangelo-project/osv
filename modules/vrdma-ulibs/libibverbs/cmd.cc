@@ -85,18 +85,23 @@ extern int abi_ver;
 
 using namespace virtio;
 
+struct ib_ucq_object {
+	struct ib_uobject	uobject;
+	struct ib_uverbs_file  *uverbs_file;
+	struct list_head	comp_list;
+	struct list_head	async_list;
+	u32			comp_events_reported;
+	u32			async_events_reported;
+};
+
+
 rdma *rdma_drv = rdma::instance();
 
 
 static void init_uobj(struct ib_uobject *uobj, u64 user_handle)
 {
-	debug("test 0\n");
-	debug("user_handle: %p\n", user_handle);
-	debug("uobj->user_handle: %p\n", uobj->user_handle);
 	uobj->user_handle = user_handle;
-	debug("test 1\n");
 	uobj->context     = &rdma_drv->hyv_uctx->ibuctx;
-	debug("test 2\n");
 	uobj->live        = 0;
 }
 
@@ -146,17 +151,15 @@ int ibv_cmd_get_context(struct ibv_context *context, struct ibv_get_context *cmd
 	struct ib_udata ibudata;
 	int ret=0;
 	struct ib_ucontext		 *ucontext;
-	struct ib_uverbs_get_context      kcmd;
-	struct ib_uverbs_get_context_resp kresp;
 
 	debug("ibv_cmd_get_context\n");
 
 	IBV_INIT_CMD_RESP(cmd, cmd_size, GET_CONTEXT, resp, resp_size);
 
-	INIT_UDATA(&ibudata, cmd + sizeof(kcmd),
-			   kcmd.response + sizeof(kresp),
-			   cmd_size - sizeof(kcmd), /*in_len*/
-			   resp_size - sizeof(kresp)); /*out_len*/
+	INIT_UDATA(&ibudata, &cmd->driver_data[0],
+			   (unsigned long) cmd->response + sizeof(*resp),
+			   cmd_size - (sizeof(*cmd) - sizeof(struct ib_uverbs_cmd_hdr)),
+			   resp_size - sizeof(*resp));
 
 	ucontext = rdma_drv->vrdma_alloc_ucontext(&ibudata);
 	if (IS_ERR(ucontext)) {
@@ -264,8 +267,6 @@ int ibv_cmd_query_port(struct ibv_context *context, uint8_t port_num,
 	}
 
 	ret = rdma_drv->vrdma_query_port(attr, port_num, &hret);
-	debug("ret: %d\n", ret);
-	debug("hret: %d\n", hret);
 	if (ret || hret) {
 		debug("could not query port on host\n");
 		kfree(attr);
@@ -301,8 +302,6 @@ int ibv_cmd_alloc_pd(struct ibv_context *context, struct ibv_pd *pd,
 		     struct ibv_alloc_pd *cmd, size_t cmd_size,
 		     struct ibv_alloc_pd_resp *resp, size_t resp_size)
 {
-	struct ib_uverbs_alloc_pd      kcmd;
-	struct ib_uverbs_alloc_pd_resp kresp;
 	struct ib_udata                ibudata;
 	struct ib_uobject             *uobj;
 	struct ib_pd                  *kpd;
@@ -310,10 +309,10 @@ int ibv_cmd_alloc_pd(struct ibv_context *context, struct ibv_pd *pd,
 	debug("ibv_cmd_alloc_pd\n");
 
     IBV_INIT_CMD_RESP(cmd, cmd_size, ALLOC_PD, resp, resp_size);
-	INIT_UDATA(&ibudata, cmd + sizeof(kcmd),
-			   kcmd.response + sizeof(kresp),
-			   cmd_size - sizeof(kcmd), /*cmd_size = in_len*/
-			   resp_size - sizeof(kresp)); /*resp_size = out_len*/
+	INIT_UDATA(&ibudata, &cmd->driver_data[0],
+			   (unsigned long) cmd->response + sizeof(*resp),
+			   cmd_size - (sizeof(*cmd) - sizeof(struct ib_uverbs_cmd_hdr)),
+			   resp_size - sizeof(*resp));
 
 	uobj = (struct ib_uobject*) kmalloc(sizeof *uobj, GFP_KERNEL);
 	if (!uobj)
@@ -367,10 +366,11 @@ int ibv_cmd_reg_mr(struct ibv_pd *pd, void *addr, size_t length,
 	cmd->pd_handle 	  = pd->handle;
 	cmd->access_flags = access;
 
-	INIT_UDATA(&ibudata, cmd + sizeof(kcmd),
-			   kcmd.response + sizeof(kresp),
-			   cmd_size - sizeof(kcmd), /*cmd_size = in_len*/
-			   resp_size - sizeof(kresp)); /*resp_size = out_len*/
+    IBV_INIT_CMD_RESP(cmd, cmd_size, ALLOC_PD, resp, resp_size);
+	INIT_UDATA(&ibudata, &cmd->driver_data[0],
+			   (unsigned long) cmd->response + sizeof(*resp),
+			   cmd_size - (sizeof(*cmd) - sizeof(struct ib_uverbs_cmd_hdr)),
+			   resp_size - sizeof(*resp));
 
 	if ((cmd->start & ~PAGE_MASK) != (cmd->hca_va & ~PAGE_MASK))
 		return -EINVAL;
@@ -446,65 +446,51 @@ int ibv_cmd_create_cq(struct ibv_context *context, int cqe,
 		      struct ibv_create_cq *cmd, size_t cmd_size,
 		      struct ibv_create_cq_resp *resp, size_t resp_size)
 {
-	debug("ibv_cmd_create_cq\n");
-	// if (abi_ver <= 2)
-	// 	return ibv_cmd_create_cq_v2(context, cqe, cq,
-	// 				    cmd, cmd_size, resp, resp_size);
-
-	// we don't need to set the in/out sizes
-	// IBV_INIT_CMD_RESP(cmd, cmd_size, CREATE_CQ, resp, resp_size);
-
-	struct ib_uverbs_create_cq      kcmd;
-	struct ib_uverbs_create_cq_resp kresp;
 	struct ib_udata                 ibudata;
 	struct ib_ucq_object           *ucqobj;
 	struct ib_uverbs_event_file    *ev_file = NULL;
 	struct ib_cq                   *ibcq;
-	int ret;
+	int ret = 0;
 
-	debug("ibv_cmd_create_cq 1\n");
-	kcmd.user_handle   = (uintptr_t) cq;
-	kcmd.cqe           = cqe;
-	kcmd.comp_vector   = comp_vector;
-	kcmd.comp_channel  = channel ? channel->fd : -1;
-	kcmd.reserved      = 0;
+	debug("ibv_cmd_create_cq\n");
+	IBV_INIT_CMD_RESP(cmd, cmd_size, CREATE_CQ, resp, resp_size);
+	cmd->user_handle   = (uintptr_t) cq;
+	cmd->cqe           = cqe;
+	cmd->comp_vector   = comp_vector;
+	cmd->comp_channel  = channel ? channel->fd : -1;
+	cmd->reserved      = 0;
 
-	debug("ibv_cmd_create_cq 2\n");
+    IBV_INIT_CMD_RESP(cmd, cmd_size, ALLOC_PD, resp, resp_size);
+	INIT_UDATA(&ibudata, &cmd->driver_data[0],
+			   (unsigned long) cmd->response + sizeof(*resp),
+			   cmd_size - (sizeof(*cmd) - sizeof(struct ib_uverbs_cmd_hdr)),
+			   resp_size - sizeof(*resp));
 
-	INIT_UDATA(&ibudata, cmd + sizeof(kcmd),
-			   kcmd.response + sizeof(kresp),
-			   cmd_size - sizeof(kcmd), /*cmd_size = in_len*/
-			   resp_size - sizeof(kresp)); /*resp_size = out_len*/
-
-	if (kcmd.comp_vector >= context->num_comp_vectors) {
+	if (cmd->comp_vector >= context->num_comp_vectors) {
 		ret = -EINVAL;
 		goto err;
 	}
 
-	debug("ibv_cmd_create_cq 3\n");
-	ucqobj = (ib_ucq_object*) kmalloc(sizeof *ucqobj, GFP_KERNEL);
+	ucqobj = (ib_ucq_object*) kmalloc(sizeof(struct ib_ucq_object), GFP_KERNEL);
 	if (!ucqobj) {
 		ret = -ENOMEM;
 		goto err;
 	}
 
-	init_uobj(&ucqobj->uobject, (u64) kcmd.user_handle);
+	init_uobj(&ucqobj->uobject, (u64) cmd->user_handle);
 
-	debug("ibv_cmd_create_cq 4\n");
-	//obj->uverbs_file	   = file;
 	ucqobj->comp_events_reported  = 0;
 	ucqobj->async_events_reported = 0;
 	INIT_LIST_HEAD(&ucqobj->comp_list);
 	INIT_LIST_HEAD(&ucqobj->async_list);
 
-	debug("ibv_cmd_create_cq 5\n");
-	ibcq = rdma_drv->vrdma_create_cq(kcmd.cqe, kcmd.comp_vector, &ibudata);
+	ibcq = rdma_drv->vrdma_create_cq(cmd->cqe, cmd->comp_vector, &ibudata);
 	if (IS_ERR(ibcq)) {
 		ret = PTR_ERR(ibcq);
 		goto err_file;
 	}
 
-	//cq->device        = file->device->ib_dev;
+	ibcq->device        = &rdma_drv->hyv_dev.ib_dev;
 	ibcq->uobject       = &ucqobj->uobject;
 	// TODO
 	// ibcq->comp_handler  = ib_uverbs_comp_handler;
@@ -512,9 +498,8 @@ int ibv_cmd_create_cq(struct ibv_context *context, int cqe,
 	ibcq->cq_context    = ev_file;
 	atomic_set(&ibcq->usecnt, 0);
 
-	memset(&resp, 0, sizeof kresp);
-	kresp.cq_handle = ucqobj->uobject.id;
-	kresp.cqe       = cq->cqe;
+	resp->cq_handle = ucqobj->uobject.id;
+	resp->cqe       = cq->cqe;
 
 	cq->handle  = resp->cq_handle;
 	cq->cqe     = resp->cqe;
@@ -835,6 +820,8 @@ int ibv_cmd_create_qp(struct ibv_pd *pd,
 		      struct ibv_create_qp *cmd, size_t cmd_size,
 		      struct ibv_create_qp_resp *resp, size_t resp_size)
 {
+	debug("ibv_cmd_create_qp\n");
+
 	// IBV_INIT_CMD_RESP(cmd, cmd_size, CREATE_QP, resp, resp_size);
 
 	// cmd->user_handle     = (uintptr_t) qp;
