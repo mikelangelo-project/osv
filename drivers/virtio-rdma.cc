@@ -6,7 +6,6 @@
  */
 
 #include <osv/mempool.hh>
-#include <osv/mmu.hh>
 #include <osv/interrupt.hh>
 #include <osv/sched.hh>
 #include <osv/ilog2.hh>
@@ -166,7 +165,6 @@ struct rdma::hyv_udata* rdma::udata_create(struct ib_udata *ibudata)
 
     debug("vRDMA: udata_create\n");
 
-
     if(ibudata->inlen < sizeof(struct ib_uverbs_cmd_hdr)) {
         debug("vRDMA: udata size is not correct. \n");
         goto fail;
@@ -174,18 +172,17 @@ struct rdma::hyv_udata* rdma::udata_create(struct ib_udata *ibudata)
 
     inlen = ibudata->inlen - sizeof(struct ib_uverbs_cmd_hdr);
 
-    debug("vRDMA: sizeof udata: %d, inlen: %d, outlen: %d\n", sizeof(*udata) , inlen , ibudata->outlen);
-
     udata = (rdma::hyv_udata *) kmalloc(sizeof(*udata) + inlen + ibudata->outlen, GFP_KERNEL);
     if (!udata) {
         debug("vRDMA: could not allocate udata\n");
         ret = -ENOMEM;
         goto fail;
     }
+    memset(udata, 0, sizeof(*udata));
     udata->in = inlen;
     udata->out = ibudata->outlen;
 
-    memcpy(udata->data, ibudata, inlen);
+    memcpy(udata->data, ibudata->inbuf, inlen);
 
     return udata;
 //fail_udata:
@@ -892,7 +889,6 @@ struct rdma::hyv_udata_translate* rdma::udata_translate_create(hyv_udata *udata,
 
     for (i = 0; i < udata_gvm_num; i++) {
         __u64 *va = (__u64 *)&udata->data[udata_gvm[i].udata_offset];
-        debug("masked va: 0x%llx\n", *va & udata_gvm[i].mask);
         umem[i] =
             pin_user_mem(*va & udata_gvm[i].mask, udata_gvm[i].size,
                      &chunks[i].data, &chunks[i].n, true);
@@ -958,7 +954,7 @@ struct rdma::hyv_user_mem* rdma::pin_user_mem(unsigned long va, unsigned long si
     debug("va: 0x%lx, size: %lu, write: %d\n", va, size, write);
 
     offset = va & PAGE_MASK;
-    n_pages = PAGE_ALIGN(size + offset) >> PAGE_SHIFT;
+    n_pages = PAGE_ALIGN(size) >> PAGE_SHIFT;
 
     debug("n_pages: %lu, offset: 0x%lx\n", n_pages, offset);
 
@@ -974,10 +970,9 @@ struct rdma::hyv_user_mem* rdma::pin_user_mem(unsigned long va, unsigned long si
         goto fail;
     }
 
-    // TODO: optimize with contiguous pages
     for (cur_va = va; n_pages != pages_pinned;
-         cur_va += (ret * PAGE_SIZE)) {
-        pages[pages_pinned] = (page*) memory::alloc_page();
+         cur_va += (size * PAGE_SIZE)) {
+        pages[pages_pinned] = (page*) memory::alloc_phys_contiguous_aligned(size, PAGE_SIZE);
         if (!cur_va) {
             debug("could not pin pages (%d)\n", ret);
             ret = -EFAULT;
@@ -1018,14 +1013,12 @@ struct rdma::hyv_user_mem* rdma::pin_user_mem(unsigned long va, unsigned long si
             }
         }
 
-//#if DBG_MEM &DPRINT_MASK
         for (i = 0; i < *n_chunks; i++) {
             debug("-- chunk[%lu] --\n", i);
             debug("virt_addr: 0x%llx\n", pages[i]);
             debug("phys_addr: 0x%llx\n", chunk_tmp[i].addr);
             debug("size: %llu\n", chunk_tmp[i].size);
         }
-//#endif
 
         *chunks = chunk_tmp;
     }
@@ -1192,10 +1185,9 @@ static inline unsigned int roundup_pow_of_two(unsigned int x)
     return 1UL << fls(x - 1);
 }
 #define MLX4_CQ_ENTRY_SIZE 0x20
-struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ibudata)
+    struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ibudata)
 {
     struct hyv_udata_gvm udata_gvm[2];
-    struct mlx4_ib_create_cq ucmd;
     int ret;
     hyv_udata_translate *udata_translate;
     hyv_create_cq_result result;
@@ -1207,13 +1199,6 @@ struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ib
 
     BUG_ON(!ibuctx);
 
-    memcpy(&ucmd, udata, sizeof(ucmd));
-    // if (ret) {
-    //     debug("copy from udata failed\n");
-    //     goto fail;
-    // }
-
-    // entries = roundup_pow_of_two(entries + 1);
     entries = (1UL << fls((entries + 1) - 1));
 
     udata_gvm[0].udata_offset = offsetof(struct mlx4_ib_create_cq, buf_addr);
@@ -1222,12 +1207,12 @@ struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ib
     udata_gvm[0].type = HYV_IB_UMEM;
 
     udata_gvm[1].udata_offset = offsetof(struct mlx4_ib_create_cq, db_addr);
-    udata_gvm[1].mask = PAGE_MASK;
+    udata_gvm[1].mask = ~PAGE_MASK;
     udata_gvm[1].size = PAGE_SIZE;
     udata_gvm[1].type = HYV_IB_UMEM;
 
     udata_gvm_num = ARRAY_SIZE(udata_gvm);
-    debug("udata_gvm_num: %d\n", udata_gvm_num);
+    debug("entries: %d, udata_gvm_num: %d\n", entries, udata_gvm_num);
     hcq = (hyv_cq*) kmalloc(sizeof(*hcq), GFP_KERNEL);
     if (!hcq) {
         debug("could not allocate cq\n");
@@ -1287,6 +1272,7 @@ struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ib
         ret = ret ? ret : result.cq_handle;
         goto fail_udata_translate;
     }
+
     hcq->host_handle = result.cq_handle;
     hcq->ibcq.cqe = result.cqe;
 
