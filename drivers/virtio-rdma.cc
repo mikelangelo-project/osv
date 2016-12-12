@@ -1256,7 +1256,7 @@ struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ib
                                                 (uint32_t) (sizeof(*udata_translate) * (udata_gvm_num ? udata_gvm_num : 1)) + \
                                                 (uint32_t) (sizeof(hyv_user_mem_chunk) * n_chunks_total) } ,
                                             };
-        struct _args_t { struct hyv_ibv_create_cqX_copy_args copy_args; struct vrdma_hypercall_result result; } *_args;
+        struct _args_t { struct hyv_ibv_create_cqX_copy_args copy_args; struct vrdma_hypercall_result48 result; } *_args;
 
         _args = (struct _args_t *) malloc(sizeof(*_args));
 
@@ -1269,7 +1269,7 @@ struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ib
         memcpy(&_args->copy_args.vector, &vector, sizeof(vector));
 
         ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args), pargs,
-                            (sizeof (pargs) / sizeof ((pargs)[0])), &_args->result.hdr, 12 /*sizeof(_args->result)*/);
+                            (sizeof (pargs) / sizeof ((pargs)[0])), &_args->result.hdr, sizeof(_args->result));
         if (!ret)
             memcpy(&result, &_args->result.value, sizeof(result));
 
@@ -1504,6 +1504,129 @@ fail_alloc:
     kfree(res);
     //hyv_ibv_destroy_qp(&qp->ibqp);
     return (ib_qp *)ERR_PTR(ret);
+}
+
+void rdma::copy_ib_qp_cap_to_hyv(const struct ib_qp_cap *ibcap,
+                     hyv_qp_cap *gcap)
+{
+    gcap->max_send_wr = ibcap->max_send_wr;
+    gcap->max_recv_wr = ibcap->max_recv_wr;
+    gcap->max_send_sge = ibcap->max_send_sge;
+    gcap->max_recv_sge = ibcap->max_recv_sge;
+    gcap->max_inline_data = ibcap->max_inline_data;
+}
+
+void rdma::copy_ib_ah_attr_to_hyv(const struct ib_ah_attr *ibahattr,
+                      hyv_ah_attr *gahattr)
+{
+    memcpy(gahattr->grh.raw_gid, ibahattr->grh.dgid.raw,
+           sizeof(gahattr->grh.raw_gid));
+    gahattr->grh.flow_label = ibahattr->grh.flow_label;
+    gahattr->grh.sgid_index = ibahattr->grh.sgid_index;
+    gahattr->grh.hop_limit = ibahattr->grh.hop_limit;
+    gahattr->grh.traffic_class = ibahattr->grh.traffic_class;
+
+    gahattr->dlid = ibahattr->dlid;
+    gahattr->sl = ibahattr->sl;
+    gahattr->src_path_bits = ibahattr->src_path_bits;
+    gahattr->static_rate = ibahattr->static_rate;
+    gahattr->ah_flags = ibahattr->ah_flags;
+    gahattr->port_num = ibahattr->port_num;
+}
+
+int rdma::vrdma_modify_qp(struct ib_qp_attr *ibattr, int cmd_attr_mask, struct ib_udata *ibudata)
+{
+    hyv_qp_attr attr;
+    int ret = 0, result;
+    hyv_udata *udata;
+    int attr_mask;
+
+    debug("vrdma_modify_qpn\n");
+
+    // set up the new attr mask
+    switch (hqp->ibqp.qp_type) {
+    case IB_QPT_XRC_INI:
+        attr_mask = cmd_attr_mask & ~(IB_QP_MAX_DEST_RD_ATOMIC | IB_QP_MIN_RNR_TIMER);
+    case IB_QPT_XRC_TGT:
+        attr_mask = cmd_attr_mask & ~(IB_QP_MAX_QP_RD_ATOMIC | IB_QP_RETRY_CNT | IB_QP_RNR_RETRY);
+    default:
+        attr_mask = cmd_attr_mask;
+    }
+
+    debug("attr_mask: %d \n", attr_mask);
+    debug("hqp->ibqp.qp_type: %d \n", hqp->ibqp.qp_type);
+
+    copy_ib_qp_cap_to_hyv(&ibattr->cap, &attr.cap);
+    copy_ib_ah_attr_to_hyv(&ibattr->ah_attr, &attr.ah_attr);
+    copy_ib_ah_attr_to_hyv(&ibattr->alt_ah_attr, &attr.alt_ah_attr);
+
+    attr.qp_state            = ibattr->qp_state;
+    attr.cur_qp_state        = ibattr->cur_qp_state;
+    attr.path_mtu            = ibattr->path_mtu;
+    attr.path_mig_state      = ibattr->path_mig_state;
+    attr.qkey                = ibattr->qkey;
+    attr.rq_psn              = ibattr->rq_psn;
+    attr.sq_psn              = ibattr->sq_psn;
+    attr.dest_qp_num         = ibattr->dest_qp_num;
+    attr.qp_access_flags     = ibattr->qp_access_flags;
+    attr.pkey_index          = ibattr->pkey_index;
+    attr.alt_pkey_index      = ibattr->alt_pkey_index;
+    attr.en_sqd_async_notify = ibattr->en_sqd_async_notify;
+    attr.max_rd_atomic       = ibattr->max_rd_atomic;
+    attr.max_dest_rd_atomic  = ibattr->max_dest_rd_atomic;
+    attr.min_rnr_timer       = ibattr->min_rnr_timer;
+    attr.port_num            = ibattr->port_num;
+    attr.timeout             = ibattr->timeout;
+    attr.retry_cnt           = ibattr->retry_cnt;
+    attr.rnr_retry           = ibattr->rnr_retry;
+    attr.alt_port_num        = ibattr->alt_port_num;
+    attr.alt_timeout         = ibattr->alt_timeout;
+
+    udata = udata_create(ibudata);
+    if (IS_ERR(udata)) {
+        ret = PTR_ERR(udata);
+        goto fail;
+    }
+
+    {
+         const struct hcall_parg pargs[] = { { udata, (uint32_t) (sizeof(*udata) + (uint32_t) ( udata->in + udata->out)) } , };
+         struct _args_t {
+             struct hyv_ibv_modify_qpX_copy_args copy_args;
+             struct vrdma_hypercall_result result;
+         } *_args;
+
+         _args = (_args_t *) kmalloc(sizeof(*_args), mem_flags);
+         if (!_args) { ret = -ENOMEM; }
+
+         _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_MODIFY_QP, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST, };
+
+         memcpy(&_args->copy_args.qp_handle, &hqp->host_handle, sizeof(hqp->host_handle));
+         memcpy(&_args->copy_args.attr, &attr, sizeof(attr));
+         memcpy(&_args->copy_args.attr_mask, &attr_mask, sizeof(attr_mask));
+
+         debug("sizeof(_args->copy_args): %d\n", sizeof(_args->copy_args));
+
+         ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args), pargs,
+                                 (sizeof(pargs) / sizeof((pargs)[0])), &_args->result.hdr, sizeof(_args->result));
+
+         if (!ret) memcpy(&result, &_args->result.value, sizeof(result));
+
+         kfree(_args);
+    }
+    if (ret || result) {
+        debug("could not modify qp on host\n");
+        ret = ret ? ret : result;
+        goto fail_udata;
+    }
+
+    ret = udata_copy_out(udata, ibudata);
+
+fail_udata:
+    //udata_destroy(udata);
+    kfree(udata);
+fail:
+    return ret;
+
 }
 
 

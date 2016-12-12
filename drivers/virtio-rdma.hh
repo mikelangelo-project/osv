@@ -183,6 +183,54 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
             uint8_t port_num;
     } hyv_qp_init_attr;
 
+    typedef struct
+    {
+        uint8_t raw_gid[16];
+        uint32_t flow_label;
+        uint8_t sgid_index;
+        uint8_t hop_limit;
+        uint8_t traffic_class;
+    } hyv_global_route;
+
+    typedef struct
+    {
+        hyv_global_route grh;
+        uint16_t dlid;
+        uint8_t sl;
+        uint8_t src_path_bits;
+        uint8_t static_rate;
+        uint8_t ah_flags;
+        uint8_t port_num;
+    } hyv_ah_attr;
+
+    typedef struct
+    {
+        uint32_t qp_state;
+        uint32_t cur_qp_state;
+        uint32_t path_mtu;
+        uint32_t path_mig_state;
+        uint32_t qkey;
+        uint32_t rq_psn;
+        uint32_t sq_psn;
+        uint32_t dest_qp_num;
+        uint32_t qp_access_flags;
+        hyv_qp_cap cap;
+        hyv_ah_attr ah_attr;
+        hyv_ah_attr alt_ah_attr;
+        uint16_t pkey_index;
+        uint16_t alt_pkey_index;
+        uint8_t en_sqd_async_notify;
+        uint8_t sq_draining;
+        uint8_t max_rd_atomic;
+        uint8_t max_dest_rd_atomic;
+        uint8_t min_rnr_timer;
+        uint8_t port_num;
+        uint8_t timeout;
+        uint8_t retry_cnt;
+        uint8_t rnr_retry;
+        uint8_t alt_port_num;
+        uint8_t alt_timeout;
+    } hyv_qp_attr;
 
     struct hyv_get_ib_device_copy_args {
         struct hcall_header hdr;
@@ -203,6 +251,14 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     struct vrdma_hypercall_result {
         struct hcall_ret_header hdr;
         int32_t value;
+    };
+
+    struct vrdma_hypercall_result48 {
+        struct hcall_ret_header hdr;
+        struct {
+            int16_t value1;
+            int32_t value2;
+        } value;
     };
 
     struct vrdma_hypercall_result64 {
@@ -267,6 +323,13 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         __u64 guest_handle;
         __u32 pd_handle;
         hyv_qp_init_attr init_attr;
+    };
+
+    struct hyv_ibv_modify_qpX_copy_args {
+        struct hcall_header hdr;
+        __u32 qp_handle;
+        hyv_qp_attr attr;
+        __u32 attr_mask;
     };
 
     struct hcall
@@ -524,6 +587,7 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     struct ib_mr* vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, struct ib_udata *ibudata);
     struct ib_cq* vrdma_create_cq(int entries, int vector, struct ib_udata *udata);
     struct ib_qp* vrdma_create_qp(struct ib_qp_init_attr *attr, struct ib_udata *udata);
+    int vrdma_modify_qp(struct ib_qp_attr *ibattr, int cmd_attr_mask, struct ib_udata *ibudata);
 
     struct hyv_device hyv_dev;
     struct hyv_ucontext *hyv_uctx;
@@ -542,6 +606,8 @@ private:
     void handle_irq();
     int register_ib_dev();
     bool pop_event(struct hyv_event *event);
+    void copy_ib_qp_cap_to_hyv(const struct ib_qp_cap *ibcap, hyv_qp_cap *gcap);
+    void copy_ib_ah_attr_to_hyv(const struct ib_ah_attr *ibahattr, hyv_ah_attr *gahattr);
 
     // the main virtio_hyv instance.
     struct virtio_hyv *_vg;

@@ -1120,64 +1120,83 @@ int ibv_cmd_modify_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
 		      int attr_mask,
 		      struct ibv_modify_qp *cmd, size_t cmd_size)
 {
-	// IBV_INIT_CMD(cmd, cmd_size, MODIFY_QP);
+	int ret;
+	struct ib_udata    ibudata;
+	struct ib_qp_attr *ibattr;
 
-	// cmd->qp_handle 		 = qp->handle;
-	// cmd->attr_mask 		 = attr_mask;
-	// cmd->qkey 		 = attr->qkey;
-	// cmd->rq_psn 		 = attr->rq_psn;
-	// cmd->sq_psn 		 = attr->sq_psn;
-	// cmd->dest_qp_num 	 = attr->dest_qp_num;
-	// cmd->qp_access_flags 	 = attr->qp_access_flags;
-	// cmd->pkey_index		 = attr->pkey_index;
-	// cmd->alt_pkey_index 	 = attr->alt_pkey_index;
-	// cmd->qp_state 		 = attr->qp_state;
-	// cmd->cur_qp_state 	 = attr->cur_qp_state;
-	// cmd->path_mtu 		 = attr->path_mtu;
-	// cmd->path_mig_state 	 = attr->path_mig_state;
-	// cmd->en_sqd_async_notify = attr->en_sqd_async_notify;
-	// cmd->max_rd_atomic 	 = attr->max_rd_atomic;
-	// cmd->max_dest_rd_atomic  = attr->max_dest_rd_atomic;
-	// cmd->min_rnr_timer 	 = attr->min_rnr_timer;
-	// cmd->port_num 		 = attr->port_num;
-	// cmd->timeout 		 = attr->timeout;
-	// cmd->retry_cnt 		 = attr->retry_cnt;
-	// cmd->rnr_retry 		 = attr->rnr_retry;
-	// cmd->alt_port_num 	 = attr->alt_port_num;
-	// cmd->alt_timeout 	 = attr->alt_timeout;
+	ibattr = (ib_qp_attr*) kmalloc(sizeof(*ibattr), GFP_KERNEL);
+	if (!ibattr)
+		return -ENOMEM;
 
-	// memcpy(cmd->dest.dgid, attr->ah_attr.grh.dgid.raw, 16);
-	// cmd->dest.flow_label 	    = attr->ah_attr.grh.flow_label;
-	// cmd->dest.dlid 		    = attr->ah_attr.dlid;
-	// cmd->dest.reserved	    = 0;
-	// cmd->dest.sgid_index 	    = attr->ah_attr.grh.sgid_index;
-	// cmd->dest.hop_limit 	    = attr->ah_attr.grh.hop_limit;
-	// cmd->dest.traffic_class     = attr->ah_attr.grh.traffic_class;
-	// cmd->dest.sl 		    = attr->ah_attr.sl;
-	// cmd->dest.src_path_bits     = attr->ah_attr.src_path_bits;
-	// cmd->dest.static_rate 	    = attr->ah_attr.static_rate;
-	// cmd->dest.is_global 	    = attr->ah_attr.is_global;
-	// cmd->dest.port_num 	    = attr->ah_attr.port_num;
+	debug("ibv_cmd_modify_qp\n");
 
-	// memcpy(cmd->alt_dest.dgid, attr->alt_ah_attr.grh.dgid.raw, 16);
-	// cmd->alt_dest.flow_label    = attr->alt_ah_attr.grh.flow_label;
-	// cmd->alt_dest.dlid 	    = attr->alt_ah_attr.dlid;
-	// cmd->alt_dest.reserved	    = 0;
-	// cmd->alt_dest.sgid_index    = attr->alt_ah_attr.grh.sgid_index;
-	// cmd->alt_dest.hop_limit     = attr->alt_ah_attr.grh.hop_limit;
-	// cmd->alt_dest.traffic_class = attr->alt_ah_attr.grh.traffic_class;
-	// cmd->alt_dest.sl 	    = attr->alt_ah_attr.sl;
-	// cmd->alt_dest.src_path_bits = attr->alt_ah_attr.src_path_bits;
-	// cmd->alt_dest.static_rate   = attr->alt_ah_attr.static_rate;
-	// cmd->alt_dest.is_global     = attr->alt_ah_attr.is_global;
-	// cmd->alt_dest.port_num 	    = attr->alt_ah_attr.port_num;
+	debug("attr_mask: %d\n", attr_mask);
+	debug("cmd.attr_mask: %d\n", cmd->attr_mask);
 
-	// cmd->reserved[0] = cmd->reserved[1] = 0;
+	IBV_INIT_CMD(cmd, cmd_size, MODIFY_QP);
 
-	// if (write(qp->context->cmd_fd, cmd, cmd_size) != cmd_size)
-	// 	return errno;
+	memset(ibattr, 0, sizeof(*ibattr));
 
-	return 0;
+	ibattr->qp_state            = (ib_qp_state) attr->qp_state;
+	ibattr->cur_qp_state        = (ib_qp_state) attr->cur_qp_state;
+	ibattr->path_mtu            = (ib_mtu) attr->path_mtu;
+	ibattr->path_mig_state 	    = (ib_mig_state) attr->path_mig_state;
+	ibattr->qkey                = attr->qkey;
+	ibattr->rq_psn              = attr->rq_psn;
+	ibattr->sq_psn              = attr->sq_psn;
+	ibattr->dest_qp_num         = attr->dest_qp_num;
+	ibattr->qp_access_flags     = attr->qp_access_flags;
+	ibattr->pkey_index		    = attr->pkey_index;
+	ibattr->alt_pkey_index 	    = attr->alt_pkey_index;
+	ibattr->en_sqd_async_notify = attr->en_sqd_async_notify;
+	ibattr->max_rd_atomic 	    = attr->max_rd_atomic;
+	ibattr->max_dest_rd_atomic  = attr->max_dest_rd_atomic;
+	ibattr->min_rnr_timer 	    = attr->min_rnr_timer;
+	ibattr->port_num 		    = attr->port_num;
+	ibattr->timeout 		    = attr->timeout;
+	ibattr->retry_cnt 		    = attr->retry_cnt;
+	ibattr->rnr_retry 		    = attr->rnr_retry;
+	ibattr->alt_port_num 	    = attr->alt_port_num;
+	ibattr->alt_timeout 	    = attr->alt_timeout;
+
+	memcpy(ibattr->ah_attr.grh.dgid.raw, attr->ah_attr.grh.dgid.raw, 16);
+	ibattr->ah_attr.grh.flow_label 	    = attr->ah_attr.grh.flow_label;
+	ibattr->ah_attr.grh.sgid_index 	    = attr->ah_attr.grh.sgid_index;
+	ibattr->ah_attr.grh.hop_limit 	    = attr->ah_attr.grh.hop_limit;
+	ibattr->ah_attr.grh.traffic_class     = attr->ah_attr.grh.traffic_class;
+	ibattr->ah_attr.dlid 		    = attr->ah_attr.dlid;
+	ibattr->ah_attr.sl 		    = attr->ah_attr.sl;
+	ibattr->ah_attr.src_path_bits     = attr->ah_attr.src_path_bits;
+	ibattr->ah_attr.static_rate 	    = attr->ah_attr.static_rate;
+	ibattr->ah_attr.ah_flags 	    	    = attr->ah_attr.is_global ? IB_AH_GRH : 0;
+	ibattr->ah_attr.port_num 	    = attr->ah_attr.port_num;
+
+	memcpy(ibattr->alt_ah_attr.grh.dgid.raw, attr->alt_ah_attr.grh.dgid.raw, 16);
+	ibattr->alt_ah_attr.grh.flow_label    = attr->alt_ah_attr.grh.flow_label;
+	ibattr->alt_ah_attr.grh.sgid_index    = attr->alt_ah_attr.grh.sgid_index;
+	ibattr->alt_ah_attr.grh.hop_limit     = attr->alt_ah_attr.grh.hop_limit;
+	ibattr->alt_ah_attr.grh.traffic_class = attr->alt_ah_attr.grh.traffic_class;
+	ibattr->alt_ah_attr.dlid 	          = attr->alt_ah_attr.dlid;
+	ibattr->alt_ah_attr.sl 	              = attr->alt_ah_attr.sl;
+	ibattr->alt_ah_attr.src_path_bits     = attr->alt_ah_attr.src_path_bits;
+	ibattr->alt_ah_attr.static_rate       = attr->alt_ah_attr.static_rate;
+	ibattr->alt_ah_attr.ah_flags          = attr->alt_ah_attr.is_global ? IB_AH_GRH : 0;
+	ibattr->alt_ah_attr.port_num 	      = attr->alt_ah_attr.port_num;
+
+	cmd->reserved[0] = cmd->reserved[1] = 0;
+
+	INIT_UDATA(&ibudata, &cmd->driver_data[0], NULL,
+			   cmd_size - (sizeof(*cmd) - sizeof(struct ib_uverbs_cmd_hdr)), cmd->out_words*4);
+
+	ret = rdma_drv->vrdma_modify_qp(ibattr, attr_mask, &ibudata);
+
+	if (ret)
+		goto out;
+
+out:
+	kfree(ibattr);
+
+	return ret;
 }
 
 int ibv_cmd_create_xrc_rcv_qp(struct ibv_qp_init_attr *init_attr,
