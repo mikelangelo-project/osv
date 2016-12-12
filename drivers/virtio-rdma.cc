@@ -1464,7 +1464,11 @@ struct ib_qp* rdma::vrdma_create_qp(struct ib_qp_init_attr *ibinit_attr, struct 
     }
     hqp->host_handle = res->qp_handle;
     hqp->ibqp.qp_num = res->qpn;
-    //copy_hyv_qp_cap_to_ib(&res->cap, &ibinit_attr->cap);
+    ibinit_attr->cap.max_send_wr     = res->cap.max_send_wr;
+    ibinit_attr->cap.max_recv_wr     = res->cap.max_recv_wr;
+    ibinit_attr->cap.max_send_sge    = res->cap.max_send_sge;
+    ibinit_attr->cap.max_recv_sge    = res->cap.max_recv_sge;
+    ibinit_attr->cap.max_inline_data = res->cap.max_inline_data;
 
     //udata_translate_destroy(udata_translate);
 
