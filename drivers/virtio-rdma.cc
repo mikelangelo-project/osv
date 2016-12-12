@@ -848,6 +848,8 @@ struct ib_pd* rdma::vrdma_alloc_pd(struct ib_udata *ibudata)
         goto fail_alloc;
     }
 
+    debug("&hpd->ibpd : %p\n", &hpd->ibpd);
+
     return &hpd->ibpd;
 
 fail_udata:
@@ -879,6 +881,10 @@ struct rdma::hyv_udata_translate* rdma::udata_translate_create(hyv_udata *udata,
     struct hyv_udata_translate *udata_translate;
     uint32_t i, j;
     int ret;
+
+    debug("udata_translate_create\n");
+
+    debug("udata_gvm_num: %d\n", udata_gvm_num);
 
     chunks = (struct uchunks*) kmalloc(sizeof(*chunks) * udata_gvm_num, GFP_KERNEL);
     if (!chunks) {
@@ -1185,7 +1191,8 @@ static inline unsigned int roundup_pow_of_two(unsigned int x)
     return 1UL << fls(x - 1);
 }
 #define MLX4_CQ_ENTRY_SIZE 0x20
-    struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ibudata)
+#define roundup_pow_of_two(a) (1UL << fls((a) - 1))
+struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ibudata)
 {
     struct hyv_udata_gvm udata_gvm[2];
     int ret;
@@ -1199,7 +1206,8 @@ static inline unsigned int roundup_pow_of_two(unsigned int x)
 
     BUG_ON(!ibuctx);
 
-    entries = (1UL << fls((entries + 1) - 1));
+    // roundup_pow_of_two
+    entries = roundup_pow_of_two(entries + 1);
 
     udata_gvm[0].udata_offset = offsetof(struct mlx4_ib_create_cq, buf_addr);
     udata_gvm[0].mask = ~0UL;
@@ -1261,7 +1269,7 @@ static inline unsigned int roundup_pow_of_two(unsigned int x)
         memcpy(&_args->copy_args.vector, &vector, sizeof(vector));
 
         ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args), pargs,
-                            (sizeof (pargs) / sizeof ((pargs)[0])), &_args->result.hdr, 12);
+                            (sizeof (pargs) / sizeof ((pargs)[0])), &_args->result.hdr, 12 /*sizeof(_args->result)*/);
         if (!ret)
             memcpy(&result, &_args->result.value, sizeof(result));
 
@@ -1302,6 +1310,196 @@ fail_create:
     // hyv_ibv_destroy_cq(&hcq->ibcq);
 fail:
     return (ib_cq*) ERR_PTR(ret);
+}
+
+
+struct ib_qp* rdma::vrdma_create_qp(struct ib_qp_init_attr *ibinit_attr, struct ib_udata *ibudata)
+{
+    struct ib_qp *ibqp;
+    struct hyv_udata_gvm udata_gvm[2];
+    unsigned int udata_gvm_num = 0;
+    struct mlx4_ib_create_qp ucmd;
+    unsigned long buf_size;
+    unsigned long sq_wqe_cnt, sq_wqe_shift;
+    unsigned long rq_wqe_cnt, rq_wqe_shift, rq_max_gs;
+    hyv_create_qp_result *res;
+    int ret;
+    struct hyv_cq *send_cq, *recv_cq;
+    struct hyv_srq *srq = NULL;
+    int hret;
+    hyv_qp_init_attr init_attr;
+    hyv_udata_translate *udata_translate;
+    hyv_udata *udata;
+    uint32_t n_chunks_total, i;
+
+    debug("vrdma_create_qp\n");
+    BUG_ON(!ibudata);
+
+    memcpy(&ucmd, ibudata->inbuf, sizeof(ucmd));
+
+    sq_wqe_shift = ucmd.log_sq_stride;
+    sq_wqe_cnt = 1 << ucmd.log_sq_bb_count;
+    rq_wqe_cnt = roundup_pow_of_two(max(1U, ibinit_attr->cap.max_recv_wr));
+    rq_max_gs = roundup_pow_of_two(max(1U, ibinit_attr->cap.max_recv_sge));
+    rq_wqe_shift = ilog2(rq_max_gs * sizeof(struct mlx4_wqe_data_seg));
+
+    buf_size = (sq_wqe_cnt << sq_wqe_shift) + (rq_wqe_cnt << rq_wqe_shift);
+    ucmd.buf_addr = ((struct mlx4_ib_create_qp*)ibudata->inbuf)->buf_addr;
+    ucmd.db_addr = ((struct mlx4_ib_create_qp*)ibudata->inbuf)->db_addr;
+    ucmd.log_sq_bb_count = 8;
+    ucmd.log_sq_stride = 6;
+    ucmd.sq_no_prefetch = 0;
+
+    udata_gvm[0].udata_offset =
+        offsetof(struct mlx4_ib_create_qp, buf_addr);
+    udata_gvm[0].mask = ~0UL;
+    udata_gvm[0].size = PAGE_ALIGN(buf_size);
+    udata_gvm[0].type = HYV_IB_UMEM;
+    udata_gvm_num++;
+
+    if (!ibinit_attr->srq) {
+        udata_gvm[1].udata_offset =
+            offsetof(struct mlx4_ib_create_qp, db_addr);
+        udata_gvm[1].mask = ~PAGE_MASK;
+        udata_gvm[1].size = PAGE_SIZE;
+        udata_gvm[1].type = HYV_IB_UMEM;
+        udata_gvm_num++;
+    }
+
+    // at moment, we can use one cq for both send and recv opration
+    // TODO: add option to use different cq
+    send_cq = hcq;
+    recv_cq = hcq;
+
+    // if (ibinit_attr->srq) {
+    //     srq = container_of(ibinit_attr->srq, struct hyv_srq, ibsrq);
+    // }
+
+    hqp = (hyv_qp*) kmalloc(sizeof(*ibqp), GFP_KERNEL);
+    if (!hqp) {
+        debug("could not allocate qp\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
+
+    res = (hyv_create_qp_result*) kmalloc(sizeof(*res), GFP_KERNEL);
+    if (!res) {
+        debug("could not allocate result");
+        ret = -ENOMEM;
+        goto fail_qp;
+    }
+
+    udata = udata_create(ibudata);
+    if (IS_ERR(udata)) {
+        ret = PTR_ERR(udata);
+        goto fail_res;
+    }
+
+    hqp->n_umem = udata_gvm_num;
+
+    hqp->umem = (hyv_user_mem**) kmalloc(sizeof(*hqp->umem) * udata_gvm_num, GFP_KERNEL);
+    if (!hqp->umem) {
+        debug("could not allocate umem\n");
+        ret = -ENOMEM;
+        goto fail_udata;
+    }
+
+    udata_translate = udata_translate_create(
+        udata, hqp->umem, udata_gvm, udata_gvm_num, &n_chunks_total);
+    if (IS_ERR(udata_translate)) {
+        debug("could not translate udata\n");
+        ret = PTR_ERR(udata_translate);
+        goto fail_umem;
+    }
+
+    init_attr.send_cq_handle      = send_cq->host_handle;
+    init_attr.recv_cq_handle      = recv_cq->host_handle;
+    init_attr.srq_handle          = ibinit_attr->srq ? srq->host_handle : -1;
+    init_attr.xrcd_handle         = -1;
+    init_attr.cap.max_send_wr     = ibinit_attr->cap.max_send_wr;
+    init_attr.cap.max_recv_wr     = ibinit_attr->cap.max_recv_wr;
+    init_attr.cap.max_send_sge    = ibinit_attr->cap.max_send_sge;
+    init_attr.cap.max_recv_sge    = ibinit_attr->cap.max_recv_sge;
+    init_attr.cap.max_inline_data = ibinit_attr->cap.max_inline_data;
+    init_attr.sq_sig_type         = ibinit_attr->sq_sig_type;
+    init_attr.qp_type             = ibinit_attr->qp_type;
+    init_attr.create_flags        = ibinit_attr->create_flags;
+    init_attr.port_num            = ibinit_attr->port_num;
+
+    {
+        const struct hcall_parg pargs[] = {
+            { res, sizeof(*res) } ,
+            { udata, (uint32_t) (sizeof(*udata) + (uint32_t) ( udata->in + udata->out)) } ,
+            { 	udata_translate,
+                (uint32_t) (sizeof(*udata_translate) * (udata_gvm_num ? udata_gvm_num : 1)) + \
+                (uint32_t) (sizeof(hyv_user_mem_chunk) * n_chunks_total)
+            } ,
+        };
+
+        struct _arg_t { struct hyv_ibv_create_qpX_copy_args copy_args; struct vrdma_hypercall_result result; } *_args;
+
+        _args = (_arg_t*) kmalloc(sizeof(*_args), mem_flags);
+
+        if (!_args) { ret = -ENOMEM; }
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_CREATE_QP, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+
+        memcpy(&_args->copy_args.guest_handle, hqp, sizeof(*hqp));
+        memcpy(&_args->copy_args.pd_handle, &hpd->host_handle, sizeof(hpd->host_handle));
+        memcpy(&_args->copy_args.init_attr, &init_attr, sizeof(init_attr)); ;
+
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr,
+                                sizeof(_args->copy_args), pargs,
+                                sizeof(pargs) / sizeof((pargs)[0]),
+                                 &_args->result.hdr, sizeof(_args->result));
+
+        if (!ret) memcpy(&hret, &_args->result.value, sizeof(hret));
+
+        kfree(_args);
+    }
+    if (ret || hret) {
+        debug("could not create qp on host\n");
+        ret = ret ? ret : hret;
+        goto fail_udata_translate;
+    }
+    hqp->host_handle = res->qp_handle;
+    hqp->ibqp.qp_num = res->qpn;
+    //copy_hyv_qp_cap_to_ib(&res->cap, &ibinit_attr->cap);
+
+    //udata_translate_destroy(udata_translate);
+
+    ret = udata_copy_out(udata, ibudata);
+    // udata_destroy(udata);
+    kfree(udata);
+    if (ret) {
+        goto fail_alloc;
+    }
+
+    kfree(res);
+
+    return &hqp->ibqp;
+
+fail_udata_translate:
+    for (i = 0; i < hqp->n_umem; i++) {
+        //hyv_unpin_user_mem(qp->umem[i]);
+    }
+    //udata_translate_destroy(udata_translate);
+fail_umem:
+    kfree(hqp->umem);
+fail_udata:
+    //udata_destroy(udata);
+    kfree(udata);
+fail_res:
+    kfree(res);
+fail_qp:
+    kfree(hqp);
+fail:
+    return (ib_qp *)ERR_PTR(ret);
+
+fail_alloc:
+    kfree(res);
+    //hyv_ibv_destroy_qp(&qp->ibqp);
+    return (ib_qp *)ERR_PTR(ret);
 }
 
 

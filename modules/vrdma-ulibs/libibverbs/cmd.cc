@@ -93,6 +93,18 @@ struct ib_ucq_object {
 	u32			comp_events_reported;
 	u32			async_events_reported;
 };
+struct ib_uevent_object {
+	struct ib_uobject	uobject;
+	struct list_head	event_list;
+	u32			events_reported;
+};
+
+
+struct ib_uqp_object {
+	struct ib_uevent_object	uevent;
+	struct list_head 	mcast_list;
+	struct ib_uxrcd_object *uxrcd;
+};
 
 
 rdma *rdma_drv = rdma::instance();
@@ -461,6 +473,7 @@ int ibv_cmd_create_cq(struct ibv_context *context, int cqe,
 	cmd->reserved      = 0;
 
     IBV_INIT_CMD_RESP(cmd, cmd_size, ALLOC_PD, resp, resp_size);
+
 	INIT_UDATA(&ibudata, &cmd->driver_data[0],
 			   (unsigned long) cmd->response + sizeof(*resp),
 			   cmd_size - (sizeof(*cmd) - sizeof(struct ib_uverbs_cmd_hdr)),
@@ -498,6 +511,7 @@ int ibv_cmd_create_cq(struct ibv_context *context, int cqe,
 	ibcq->cq_context    = ev_file;
 	atomic_set(&ibcq->usecnt, 0);
 
+	ucqobj->uobject.object = (void*) ibcq;
 	resp->cq_handle = ucqobj->uobject.id;
 	resp->cqe       = cq->cqe;
 
@@ -820,61 +834,202 @@ int ibv_cmd_create_qp(struct ibv_pd *pd,
 		      struct ibv_create_qp *cmd, size_t cmd_size,
 		      struct ibv_create_qp_resp *resp, size_t resp_size)
 {
+	struct ib_uqp_object           *uqpobj;
+
+	struct ib_pd                   *ibpd = NULL;
+	struct ib_qp                   *ibqp;
+	struct ib_udata                 ibudata;
+	struct ib_xrcd		       *xrcd = NULL;
+	struct ib_uobject	       *uninitialized_var(xrcd_uobj);
+	struct ib_cq                   *scq = NULL, *rcq = NULL;
+	struct ib_srq                  *srq = NULL;
+	struct ib_qp_init_attr          qpattr;
+	struct ib_device	       *device;
+	int ret = 0;
+
+	IBV_INIT_CMD_RESP(cmd, cmd_size, CREATE_QP, resp, resp_size);
+
 	debug("ibv_cmd_create_qp\n");
 
-	// IBV_INIT_CMD_RESP(cmd, cmd_size, CREATE_QP, resp, resp_size);
+	cmd->user_handle     = (uintptr_t) qp;
+	cmd->pd_handle 	     = pd->handle;
+	cmd->send_cq_handle  = attr->send_cq->handle;
+	cmd->recv_cq_handle  = attr->recv_cq->handle;
+	cmd->max_send_wr     = attr->cap.max_send_wr;
+	cmd->max_recv_wr     = attr->cap.max_recv_wr;
+	cmd->max_send_sge    = attr->cap.max_send_sge;
+	cmd->max_recv_sge    = attr->cap.max_recv_sge;
+	cmd->max_inline_data = attr->cap.max_inline_data;
+	cmd->sq_sig_all	     = attr->sq_sig_all;
+	cmd->qp_type 	     = attr->qp_type;
+	cmd->is_srq 	     = !!attr->srq;
+	cmd->srq_handle      = attr->qp_type == IBV_QPT_XRC ?
+		(attr->xrc_domain ? attr->xrc_domain->handle : 0) :
+		(attr->srq ? attr->srq->handle : 0);
+	cmd->reserved	     = 0;
 
-	// cmd->user_handle     = (uintptr_t) qp;
-	// cmd->pd_handle 	     = pd->handle;
-	// cmd->send_cq_handle  = attr->send_cq->handle;
-	// cmd->recv_cq_handle  = attr->recv_cq->handle;
-	// cmd->max_send_wr     = attr->cap.max_send_wr;
-	// cmd->max_recv_wr     = attr->cap.max_recv_wr;
-	// cmd->max_send_sge    = attr->cap.max_send_sge;
-	// cmd->max_recv_sge    = attr->cap.max_recv_sge;
-	// cmd->max_inline_data = attr->cap.max_inline_data;
-	// cmd->sq_sig_all	     = attr->sq_sig_all;
-	// cmd->qp_type 	     = attr->qp_type;
-	// cmd->is_srq 	     = !!attr->srq;
-	// cmd->srq_handle      = attr->qp_type == IBV_QPT_XRC ?
-	// 	(attr->xrc_domain ? attr->xrc_domain->handle : 0) :
-	// 	(attr->srq ? attr->srq->handle : 0);
-	// cmd->reserved	     = 0;
+	INIT_UDATA(&ibudata, &cmd->driver_data[0],
+			   (unsigned long) cmd->response + sizeof(*resp),
+			   cmd_size - (sizeof(*cmd) - sizeof(struct ib_uverbs_cmd_hdr)),
+			   resp_size - sizeof(*resp));
+
+	uqpobj = (ib_uqp_object*) kmalloc(sizeof(struct ib_uqp_object), GFP_KERNEL);
+	if (!uqpobj) {
+		ret = -ENOMEM;
+		// goto err;
+	}
+	memset(uqpobj, 0, sizeof(*uqpobj));
+
+	init_uobj(&uqpobj->uevent.uobject, (u64) cmd->user_handle);
+
+
+	if (cmd->qp_type == IB_QPT_XRC_TGT) {
+		debug("cmd.qp_type == IB_QPT_XRC_TGT\n");
+		// xrcd = idr_read_xrcd(cmd.pd_handle, file->ucontext, &xrcd_uobj);
+		// if (!xrcd) {
+		// 	ret = -EINVAL;
+		// 	goto err_put;
+		// }
+		// device = xrcd->device;
+	} else {
+		if (cmd->qp_type == IB_QPT_XRC_INI) {
+			cmd->max_recv_wr = cmd->max_recv_sge = 0;
+			debug("cmd.qp_type == IB_QPT_XRC_INI\n");
+		} else {
+			if (cmd->is_srq) {
+			debug("cmd is_srq\n");
+				// srq = idr_read_srq(cmd.srq_handle, file->ucontext);
+				// if (!srq || srq->srq_type != IB_SRQT_BASIC) {
+				// 	ret = -EINVAL;
+				// 	goto err_put;
+				// }
+			}
+
+			if (cmd->recv_cq_handle != cmd->send_cq_handle) {
+				debug("cmd.recv_cq_handle != cmd.send_cq_handle");
+				// rcq = idr_read_cq(cmd.recv_cq_handle, file->ucontext, 0);
+				rcq = &rdma_drv->hcq->ibcq;
+				// if (!rcq) {
+				// 	ret = -EINVAL;
+				// 	goto err_put;
+				// }
+			}
+		}
+
+		// TODO: the uobject->object is same as &rdma_drv->hcq->ibcq
+		// consider to not use this uobject later
+		// scq = (ib_cq*) rdma_drv->hcq->ibcq.uobject->object;
+		scq = &rdma_drv->hcq->ibcq;
+		rcq = rcq ?: scq;
+
+		ibpd  = &rdma_drv->hpd->ibpd;
+		if (!ibpd || !scq) {
+			ret = -EINVAL;
+			goto err_put;
+		}
+
+		device = &rdma_drv->hyv_dev.ib_dev;
+	}
+
+	// qpattr.event_handler = ib_uverbs_qp_event_handler;
+	// qpattr.qp_context    = file;
+	qpattr.send_cq       = scq;
+	qpattr.recv_cq       = rcq;
+	qpattr.srq           = srq;
+	qpattr.xrcd	   = xrcd;
+	qpattr.sq_sig_type   = cmd->sq_sig_all ? IB_SIGNAL_ALL_WR : IB_SIGNAL_REQ_WR;
+	qpattr.qp_type       = (ib_qp_type) cmd->qp_type;
+	qpattr.create_flags  = (ib_qp_create_flags) 0;
+	qpattr.cap.max_send_wr     = cmd->max_send_wr;
+	qpattr.cap.max_recv_wr     = cmd->max_recv_wr;
+	qpattr.cap.max_send_sge    = cmd->max_send_sge;
+	qpattr.cap.max_recv_sge    = cmd->max_recv_sge;
+	qpattr.cap.max_inline_data = cmd->max_inline_data;
+
+	// uqpobj->uevent.events_reported     = 0;
+	// INIT_LIST_HEAD(&obj->uevent.event_list);
+	// INIT_LIST_HEAD(&obj->mcast_list);
+
+	if (cmd->qp_type == IB_QPT_XRC_TGT)
+		debug("cmd.qp_type == IB_QPT_XRC_TGT\n");
+		// qp = ib_create_qp(pd, &attr);
+	else {
+		debug("qp = device->create_qp\n");
+		// qp = device->create_qp(pd, &attr, &udata);
+		ibqp = rdma_drv->vrdma_create_qp(&qpattr, &ibudata);
+	}
+
+	if (IS_ERR(qp)) {
+		ret = PTR_ERR(qp);
+		// goto err_put;
+	}
+
+	if (cmd->qp_type != IB_QPT_XRC_TGT) {
+		ibqp->real_qp	  = ibqp;
+		ibqp->device	  = device;
+		ibqp->pd		  = &rdma_drv->hpd->ibpd;
+		ibqp->send_cq	  = qpattr.send_cq;
+		ibqp->recv_cq	  = qpattr.recv_cq;
+		ibqp->srq		  = qpattr.srq;
+		ibqp->event_handler = qpattr.event_handler;
+		ibqp->qp_context	  = qpattr.qp_context;
+		ibqp->qp_type	  = qpattr.qp_type;
+		atomic_set(&ibqp->usecnt, 0);
+		atomic_inc(&ibpd->usecnt);
+		atomic_inc(&qpattr.send_cq->usecnt);
+		if (qpattr.recv_cq)
+			atomic_inc(&qpattr.recv_cq->usecnt);
+		if (qpattr.srq)
+			atomic_inc(&qpattr.srq->usecnt);
+	}
+	ibqp->uobject = &uqpobj->uevent.uobject;
 
 	// if (write(pd->context->cmd_fd, cmd, cmd_size) != cmd_size)
 	// 	return errno;
 
 	// VALGRIND_MAKE_MEM_DEFINED(resp, resp_size);
 
-	// qp->handle 		  = resp->qp_handle;
-	// qp->qp_num 		  = resp->qpn;
-	// qp->context		  = pd->context;
+	qp->handle 		  = resp->qp_handle;
+	qp->qp_num 		  = resp->qpn;
+	qp->context		  = pd->context;
 
-	// if (abi_ver > 3) {
-	// 	attr->cap.max_recv_sge    = resp->max_recv_sge;
-	// 	attr->cap.max_send_sge    = resp->max_send_sge;
-	// 	attr->cap.max_recv_wr     = resp->max_recv_wr;
-	// 	attr->cap.max_send_wr     = resp->max_send_wr;
-	// 	attr->cap.max_inline_data = resp->max_inline_data;
-	// }
+	if (abi_ver > 3) {
+		attr->cap.max_recv_sge    = resp->max_recv_sge;
+		attr->cap.max_send_sge    = resp->max_send_sge;
+		attr->cap.max_recv_wr     = resp->max_recv_wr;
+		attr->cap.max_send_wr     = resp->max_send_wr;
+		attr->cap.max_inline_data = resp->max_inline_data;
+	}
 
-	// if (abi_ver == 4) {
-	// 	struct ibv_create_qp_resp_v4 *resp_v4 =
-	// 		(struct ibv_create_qp_resp_v4 *) resp;
+	if (abi_ver == 4) {
+		struct ibv_create_qp_resp_v4 *resp_v4 =
+			(struct ibv_create_qp_resp_v4 *) resp;
 
-	// 	memmove((void *) resp + sizeof *resp,
-	// 		(void *) resp_v4 + sizeof *resp_v4,
-	// 		resp_size - sizeof *resp);
-	// } else if (abi_ver <= 3) {
-	// 	struct ibv_create_qp_resp_v3 *resp_v3 =
-	// 		(struct ibv_create_qp_resp_v3 *) resp;
+		memmove((void *) resp + sizeof *resp,
+			(void *) resp_v4 + sizeof *resp_v4,
+			resp_size - sizeof *resp);
+	} else if (abi_ver <= 3) {
+		struct ibv_create_qp_resp_v3 *resp_v3 =
+			(struct ibv_create_qp_resp_v3 *) resp;
 
-	// 	memmove((void *) resp + sizeof *resp,
-	// 		(void *) resp_v3 + sizeof *resp_v3,
-	// 		resp_size - sizeof *resp);
-	// }
+		memmove((void *) resp + sizeof *resp,
+			(void *) resp_v3 + sizeof *resp_v3,
+			resp_size - sizeof *resp);
+	}
 
-	return 0;
+err_put:
+	// if (xrcd)
+	// 	put_xrcd_read(xrcd_uobj);
+	// if (pd)
+	// 	put_pd_read(pd);
+	// if (scq)
+	// 	put_cq_read(scq);
+	// if (rcq && rcq != scq)
+	// 	put_cq_read(rcq);
+	// if (srq)
+	// 	put_srq_read(srq);
+
+	return ret;
 }
 
 int ibv_cmd_query_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,

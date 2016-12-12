@@ -161,6 +161,29 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         int32_t value;
     };
 
+    typedef struct
+    {
+            uint32_t max_send_wr;
+            uint32_t max_recv_wr;
+            uint32_t max_send_sge;
+            uint32_t max_recv_sge;
+            uint32_t max_inline_data;
+    } hyv_qp_cap;
+
+    typedef struct
+    {
+            int32_t send_cq_handle;
+            int32_t recv_cq_handle;
+            int32_t srq_handle;
+            int32_t xrcd_handle;
+            hyv_qp_cap cap;
+            uint32_t sq_sig_type;
+            uint32_t qp_type;
+            uint32_t create_flags;
+            uint8_t port_num;
+    } hyv_qp_init_attr;
+
+
     struct hyv_get_ib_device_copy_args {
         struct hcall_header hdr;
         uint32_t dev_handle;
@@ -236,6 +259,14 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     struct hyv_munmap_copy_args {
         struct hcall_header hdr;
         __u32 mmap_handle;
+    };
+
+
+    struct hyv_ibv_create_qpX_copy_args {
+        struct hcall_header hdr;
+        __u64 guest_handle;
+        __u32 pd_handle;
+        hyv_qp_init_attr init_attr;
     };
 
     struct hcall
@@ -350,6 +381,21 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
 
         void *priv;
     };
+
+
+    struct hyv_srq
+    {
+        struct ib_srq ibsrq;
+
+        uint32_t host_handle;
+
+        /* these are translated udata pointers */
+        struct hyv_user_mem **umem;
+        unsigned long n_umem;
+
+        void *priv;
+    };
+
     struct hyv_ucontext
     {
         struct ib_ucontext ibuctx;
@@ -448,6 +494,13 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         int32_t cqe;
     } hyv_create_cq_result;
 
+    typedef struct
+    {
+            uint32_t qp_handle;
+            uint32_t qpn;
+            hyv_qp_cap cap;
+    } hyv_create_qp_result;
+
     struct hyv_udata_translate* udata_translate_create(hyv_udata *udata,
                                                        struct hyv_user_mem **umem,
                                                        struct hyv_udata_gvm *udata_gvm,
@@ -470,12 +523,17 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     struct ib_pd* vrdma_alloc_pd(struct ib_udata *ibudata);
     struct ib_mr* vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, struct ib_udata *ibudata);
     struct ib_cq* vrdma_create_cq(int entries, int vector, struct ib_udata *udata);
+    struct ib_qp* vrdma_create_qp(struct ib_qp_init_attr *attr, struct ib_udata *udata);
 
     struct hyv_device hyv_dev;
     struct hyv_ucontext *hyv_uctx;
+
+    // TODO: consider to change following into list objects
+    // as there may be multiple of hcq in one peer
     struct hyv_pd *hpd;
     struct hyv_mr *hmr;
     struct hyv_cq *hcq;
+    struct hyv_qp *hqp;
 
 private:
     void handle_event();
