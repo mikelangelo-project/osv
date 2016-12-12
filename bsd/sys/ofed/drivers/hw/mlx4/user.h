@@ -104,4 +104,13 @@ struct mlx4_ib_create_qp {
 	uint8_t	reserved[5];
 };
 
+
+// section for defs ported from qp.h
+struct mlx4_wqe_data_seg {
+        __be32                  byte_count;
+        __be32                  lkey;
+        __be64                  addr;
+};
+
+
 #endif /* MLX4_IB_USER_H */
