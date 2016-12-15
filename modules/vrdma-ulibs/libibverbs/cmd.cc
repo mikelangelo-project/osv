@@ -513,7 +513,7 @@ int ibv_cmd_create_cq(struct ibv_context *context, int cqe,
 
 	ucqobj->uobject.object = (void*) ibcq;
 	resp->cq_handle = ucqobj->uobject.id;
-	resp->cqe       = cq->cqe;
+	resp->cqe       = ibcq->cqe;
 
 	cq->handle  = resp->cq_handle;
 	cq->cqe     = resp->cqe;
