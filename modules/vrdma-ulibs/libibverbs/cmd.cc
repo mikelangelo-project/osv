@@ -472,8 +472,6 @@ int ibv_cmd_create_cq(struct ibv_context *context, int cqe,
 	cmd->comp_channel  = channel ? channel->fd : -1;
 	cmd->reserved      = 0;
 
-    IBV_INIT_CMD_RESP(cmd, cmd_size, ALLOC_PD, resp, resp_size);
-
 	INIT_UDATA(&ibudata, &cmd->driver_data[0],
 			   (unsigned long) cmd->response + sizeof(*resp),
 			   cmd_size - (sizeof(*cmd) - sizeof(struct ib_uverbs_cmd_hdr)),
