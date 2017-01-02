@@ -159,7 +159,7 @@ fail_alloc:
 
 struct rdma::hyv_udata* rdma::udata_create(struct ib_udata *ibudata)
 {
-    int ret = -1;
+    int ret = -1, udata_size;
     struct rdma::hyv_udata *udata;
     unsigned long inlen;
 
@@ -170,17 +170,21 @@ struct rdma::hyv_udata* rdma::udata_create(struct ib_udata *ibudata)
         goto fail;
     }
 
+    udata_size = sizeof(*udata) + inlen + ibudata->outlen;
     inlen = ibudata->inlen - sizeof(struct ib_uverbs_cmd_hdr);
 
-    udata = (rdma::hyv_udata *) kmalloc(sizeof(*udata) + inlen + ibudata->outlen, GFP_KERNEL);
+    udata = (rdma::hyv_udata *) kmalloc(udata_size, GFP_KERNEL);
     if (!udata) {
         debug("vRDMA: could not allocate udata\n");
         ret = -ENOMEM;
         goto fail;
     }
-    memset(udata, 0, sizeof(*udata));
+    memset(udata, 0, udata_size);
     udata->in = inlen;
     udata->out = ibudata->outlen;
+
+    // TODO: try to aviod the memcpy
+    // udata->data = ibudata->inbuf;
 
     memcpy(udata->data, ibudata->inbuf, inlen);
 
@@ -196,7 +200,9 @@ int rdma::udata_copy_out(hyv_udata *udata, struct ib_udata *ibudata)
 {
     void *out = udata->data + udata->in;
 
-    ibudata = (struct ib_udata *) out;
+    // TODO: try to avoid this memcpy
+    //ibudata->outbuf = out;
+    memcpy(ibudata->outbuf, out,  udata->out);
 
     return 0;
 }
@@ -399,7 +405,6 @@ int rdma::do_hcall_sync(struct hcall_queue *hvq,
     // 	{ false }, COMPLETION_INITIALIZER(hcall_sync.completion)
     // } ;
 
-
     ret = do_hcall(hvq, &hcall_sync.base, hdr, copy_size, pargs, npargs,
                hret, result_size);
     if (ret) {
@@ -535,6 +540,8 @@ int rdma::vrdma_mmap(struct hyv_mmap *gmm)
         ret = ret ? ret : result.mmap_handle;
         goto fail;
     }
+
+    debug("result.pgprot: %llu\n", result.pgprot);
 
     gmm->host_handle = result.mmap_handle;
     gmm->mapped = true;
@@ -1121,7 +1128,7 @@ struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, s
                                             };
         struct _args_t {
             struct rdma::hyv_ibv_reg_user_mrX_copy_args copy_args;
-            struct rdma::vrdma_hypercall_result64 result; // ibv_reg_mr_resp
+            struct rdma::vrdma_hypercall_result96 result; // ibv_reg_mr_resp
         } *_args;
 
         _args = (struct _args_t *) malloc(sizeof(*_args));
@@ -1283,6 +1290,7 @@ struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ib
 
     hcq->host_handle = result.cq_handle;
     hcq->ibcq.cqe = result.cqe;
+    debug("result.cqe: %d\n", result.cqe);
 
     // udata_translate_destroy(udata_translate);
 
@@ -1470,6 +1478,8 @@ struct ib_qp* rdma::vrdma_create_qp(struct ib_qp_init_attr *ibinit_attr, struct 
     ibinit_attr->cap.max_recv_sge    = res->cap.max_recv_sge;
     ibinit_attr->cap.max_inline_data = res->cap.max_inline_data;
 
+    debug("res->qpn: %d\n", res->qpn);
+
     //udata_translate_destroy(udata_translate);
 
     ret = udata_copy_out(udata, ibudata);
@@ -1541,7 +1551,7 @@ int rdma::vrdma_modify_qp(struct ib_qp_attr *ibattr, int cmd_attr_mask, struct i
     hyv_udata *udata;
     int attr_mask;
 
-    debug("vrdma_modify_qpn\n");
+    debug("vrdma_modify_qp\n");
 
     // set up the new attr mask
     switch (hqp->ibqp.qp_type) {
@@ -1603,8 +1613,6 @@ int rdma::vrdma_modify_qp(struct ib_qp_attr *ibattr, int cmd_attr_mask, struct i
          memcpy(&_args->copy_args.qp_handle, &hqp->host_handle, sizeof(hqp->host_handle));
          memcpy(&_args->copy_args.attr, &attr, sizeof(attr));
          memcpy(&_args->copy_args.attr_mask, &attr_mask, sizeof(attr_mask));
-
-         debug("sizeof(_args->copy_args): %d\n", sizeof(_args->copy_args));
 
          ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args), pargs,
                                  (sizeof(pargs) / sizeof((pargs)[0])), &_args->result.hdr, sizeof(_args->result));

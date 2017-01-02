@@ -266,6 +266,15 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         int64_t value;
     };
 
+    struct vrdma_hypercall_result96 {
+        struct hcall_ret_header hdr;
+        struct {
+            int32_t value1;
+            int32_t value2;
+            int32_t value3;
+        } value;
+    };
+
     struct hyv_mmap_copy_args {
         struct hcall_header hdr;
         __u32 uctx_handle;
