@@ -1208,17 +1208,18 @@ struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ib
     hyv_udata *udata;
     uint32_t n_chunks_total;
     uint32_t udata_gvm_num;
+    int umem_entries;
 
     debug("vrdma_create_cq\n");
 
     BUG_ON(!ibuctx);
 
     // roundup_pow_of_two
-    entries = roundup_pow_of_two(entries + 1);
+    umem_entries = roundup_pow_of_two(entries + 1);
 
     udata_gvm[0].udata_offset = offsetof(struct mlx4_ib_create_cq, buf_addr);
     udata_gvm[0].mask = ~0UL;
-    udata_gvm[0].size = PAGE_ALIGN(MLX4_CQ_ENTRY_SIZE * entries);
+    udata_gvm[0].size = PAGE_ALIGN(MLX4_CQ_ENTRY_SIZE *  umem_entries);
     udata_gvm[0].type = HYV_IB_UMEM;
 
     udata_gvm[1].udata_offset = offsetof(struct mlx4_ib_create_cq, db_addr);
@@ -1227,7 +1228,7 @@ struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ib
     udata_gvm[1].type = HYV_IB_UMEM;
 
     udata_gvm_num = ARRAY_SIZE(udata_gvm);
-    debug("entries: %d, udata_gvm_num: %d\n", entries, udata_gvm_num);
+    debug("entries: %d, udata_gvm_num: %d\n", umem_entries, udata_gvm_num);
     hcq = (hyv_cq*) kmalloc(sizeof(*hcq), GFP_KERNEL);
     if (!hcq) {
         debug("could not allocate cq\n");
