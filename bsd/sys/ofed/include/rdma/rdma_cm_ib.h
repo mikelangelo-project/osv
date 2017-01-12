@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2007 Cisco Systems.  All rights reserved.
+ * Copyright (c) 2006 Intel Corporation.  All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -30,54 +30,25 @@
  * SOFTWARE.
  */
 
-#ifndef IB_UMEM_H
-#define IB_UMEM_H
+#if !defined(RDMA_CM_IB_H)
+#define RDMA_CM_IB_H
 
-#include <linux/list.h>
-#include <linux/scatterlist.h>
-#include <linux/workqueue.h>
+#include <rdma/rdma_cm.h>
 
-struct ib_ucontext;
+/**
+ * rdma_set_ib_paths - Manually sets the path records used to establish a
+ *   connection.
+ * @id: Connection identifier associated with the request.
+ * @path_rec: Reference to the path record
+ *
+ * This call permits a user to specify routing information for rdma_cm_id's
+ * bound to Infiniband devices.  It is called on the client side of a
+ * connection and replaces the call to rdma_resolve_route.
+ */
+int rdma_set_ib_paths(struct rdma_cm_id *id,
+		      struct ib_sa_path_rec *path_rec, int num_paths);
 
-struct ib_umem {
-	struct ib_ucontext     *context;
-	size_t			length;
-	int			offset;
-	int			page_size;
-	int                     writable;
-	int                     hugetlb;
-	struct list_head	chunk_list;
-	struct work_struct	work;
-	struct mm_struct       *mm;
-	unsigned long		diff;
-};
+/* Global qkey for UDP QPs and multicast groups. */
+#define RDMA_UDP_QKEY 0x01234567
 
-struct ib_umem_chunk {
-	struct list_head	list;
-	int                     nents;
-	int                     nmap;
-	struct scatterlist      page_list[0];
-};
-
-#ifdef CONFIG_INFINIBAND_USER_MEM
-
-struct ib_umem *ib_umem_get(struct ib_ucontext *context, unsigned long addr,
-			    size_t size, int access, int dmasync);
-void ib_umem_release(struct ib_umem *umem);
-int ib_umem_page_count(struct ib_umem *umem);
-
-#else /* CONFIG_INFINIBAND_USER_MEM */
-
-#include <linux/err.h>
-
-static inline struct ib_umem *ib_umem_get(struct ib_ucontext *context,
-					  unsigned long addr, size_t size,
-					  int access, int dmasync) {
-	return ERR_PTR(-EINVAL);
-}
-static inline void ib_umem_release(struct ib_umem *umem) { }
-static inline int ib_umem_page_count(struct ib_umem *umem) { return 0; }
-
-#endif /* CONFIG_INFINIBAND_USER_MEM */
-
-#endif /* IB_UMEM_H */
+#endif /* RDMA_CM_IB_H */
