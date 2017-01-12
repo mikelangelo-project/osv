@@ -33,7 +33,8 @@
 #ifndef DOORBELL_H
 #define DOORBELL_H
 
-#ifdef __LP64__
+#if SIZEOF_LONG == 8
+
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 #  define MLX4_PAIR_TO_64(val) ((uint64_t) val[1] << 32 | val[0])
 #elif __BYTE_ORDER == __BIG_ENDIAN

@@ -40,6 +40,7 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <string.h>
+#include <errno.h>
 
 #include "mlx4.h"
 #include "doorbell.h"
@@ -208,19 +209,19 @@ int mlx4_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 
 	for (nreq = 0; wr; ++nreq, wr = wr->next) {
 		if (wq_overflow(&qp->sq, nreq, to_mcq(qp->ibv_qp.send_cq))) {
-			ret = -1;
+			ret = ENOMEM;
 			*bad_wr = wr;
 			goto out;
 		}
 
 		if (wr->num_sge > qp->sq.max_gs) {
-			ret = -1;
+			ret = ENOMEM;
 			*bad_wr = wr;
 			goto out;
 		}
 
 		if (wr->opcode >= sizeof mlx4_ib_opcode / sizeof mlx4_ib_opcode[0]) {
-			ret = -1;
+			ret = EINVAL;
 			*bad_wr = wr;
 			goto out;
 		}
@@ -228,7 +229,7 @@ int mlx4_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 		ctrl = wqe = get_send_wqe(qp, ind & (qp->sq.wqe_cnt - 1));
 		qp->sq.wrid[ind & (qp->sq.wqe_cnt - 1)] = wr->wr_id;
 
-		ctrl->xrcrb_flags =
+		ctrl->srcrb_flags =
 			(wr->send_flags & IBV_SEND_SIGNALED ?
 			 htonl(MLX4_WQE_CTRL_CQ_UPDATE) : 0) |
 			(wr->send_flags & IBV_SEND_SOLICITED ?
@@ -245,9 +246,6 @@ int mlx4_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 		size = sizeof *ctrl / 16;
 
 		switch (ibqp->qp_type) {
-		case IBV_QPT_XRC:
-			ctrl->xrcrb_flags |= htonl(wr->xrc_remote_srq_num << 8);
-			/* fall thru */
 		case IBV_QPT_RC:
 		case IBV_QPT_UC:
 			switch (wr->opcode) {
@@ -269,6 +267,8 @@ int mlx4_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 				/* fall through */
 			case IBV_WR_RDMA_WRITE:
 			case IBV_WR_RDMA_WRITE_WITH_IMM:
+				if (!wr->num_sge)
+					inl = 1;
 				set_raddr_seg(wqe, wr->wr.rdma.remote_addr,
 					      wr->wr.rdma.rkey);
 				wqe  += sizeof (struct mlx4_wqe_raddr_seg);
@@ -286,11 +286,12 @@ int mlx4_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 			set_datagram_seg(wqe, wr);
 			wqe  += sizeof (struct mlx4_wqe_datagram_seg);
 			size += sizeof (struct mlx4_wqe_datagram_seg) / 16;
-			if (to_mah(wr->wr.ud.ah)->tagged) {
-				ctrl->ins_vlan = 1 << 6;
-				ctrl->vlan_tag = htons(to_mah(wr->wr.ud.ah)->vlan);
-			}
+			break;
 
+		case IBV_QPT_RAW_PACKET:
+			/* For raw eth, the MLX4_WQE_CTRL_SOLICIT flag is used
+			 * to indicate that no icrc should be calculated */
+			ctrl->srcrb_flags |= htonl(MLX4_WQE_CTRL_SOLICIT);
 			break;
 
 		default:
@@ -319,7 +320,7 @@ int mlx4_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 
 				if (inl > qp->max_inline_data) {
 					inl = 0;
-					ret = -1;
+					ret = ENOMEM;
 					*bad_wr = wr;
 					goto out;
 				}
@@ -386,6 +387,8 @@ int mlx4_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 		ctrl->owner_opcode = htonl(mlx4_ib_opcode[wr->opcode]) |
 			(ind & qp->sq.wqe_cnt ? htonl(1 << 31) : 0);
 
+		printf("ctrl->owner_opcode: %d\n", ctrl->owner_opcode);
+
 		/*
 		 * We can improve latency by not stamping the last
 		 * send queue WQE until after ringing the doorbell, so
@@ -401,9 +404,9 @@ int mlx4_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 out:
 	ctx = to_mctx(ibqp->context);
 
-	if (nreq == 1 && inl && size > 1 && size < ctx->bf_buf_size / 16) {
+	if (nreq == 1 && inl && size > 1 && size <= ctx->bf_buf_size / 16) {
 		ctrl->owner_opcode |= htonl((qp->sq.head & 0xffff) << 8);
-		*(uint32_t *) (&ctrl->vlan_tag) |= qp->doorbell_qpn;
+		*(uint32_t *) ctrl->reserved |= qp->doorbell_qpn;
 		/*
 		 * Make sure that descriptor is written to memory
 		 * before writing to BlueFlame page.
@@ -439,6 +442,7 @@ out:
 
 	pthread_spin_unlock(&qp->sq.lock);
 
+	printf("ret qp->sq.head - qp->sq.tail: %d\n", qp->sq.head - qp->sq.tail);
 	return ret;
 }
 
@@ -460,13 +464,13 @@ int mlx4_post_recv(struct ibv_qp *ibqp, struct ibv_recv_wr *wr,
 
 	for (nreq = 0; wr; ++nreq, wr = wr->next) {
 		if (wq_overflow(&qp->rq, nreq, to_mcq(qp->ibv_qp.recv_cq))) {
-			ret = -1;
+			ret = ENOMEM;
 			*bad_wr = wr;
 			goto out;
 		}
 
 		if (wr->num_sge > qp->rq.max_gs) {
-			ret = -1;
+			ret = ENOMEM;
 			*bad_wr = wr;
 			goto out;
 		}
@@ -505,7 +509,7 @@ out:
 	return ret;
 }
 
-int num_inline_segs(int data, enum ibv_qp_type type)
+static int num_inline_segs(int data, enum ibv_qp_type type)
 {
 	/*
 	 * Inline data segments are not allowed to cross 64 byte
@@ -553,7 +557,6 @@ void mlx4_calc_sq_wqe_size(struct ibv_qp_cap *cap, enum ibv_qp_type type,
 		size += sizeof (struct mlx4_wqe_raddr_seg);
 		break;
 
-	case IBV_QPT_XRC:
 	case IBV_QPT_RC:
 		size += sizeof (struct mlx4_wqe_raddr_seg);
 		/*
@@ -632,10 +635,8 @@ void mlx4_set_sq_sizes(struct mlx4_qp *qp, struct ibv_qp_cap *cap,
 		       enum ibv_qp_type type)
 {
 	int wqe_size;
-	struct mlx4_context *ctx = to_mctx(qp->ibv_qp.context);
 
-	wqe_size = min((1 << qp->sq.wqe_shift), MLX4_MAX_WQE_SIZE) -
-		sizeof (struct mlx4_wqe_ctrl_seg);
+	wqe_size = (1 << qp->sq.wqe_shift) - sizeof (struct mlx4_wqe_ctrl_seg);
 	switch (type) {
 	case IBV_QPT_UD:
 		wqe_size -= sizeof (struct mlx4_wqe_datagram_seg);
@@ -643,7 +644,6 @@ void mlx4_set_sq_sizes(struct mlx4_qp *qp, struct ibv_qp_cap *cap,
 
 	case IBV_QPT_UC:
 	case IBV_QPT_RC:
-	case IBV_QPT_XRC:
 		wqe_size -= sizeof (struct mlx4_wqe_raddr_seg);
 		break;
 
@@ -652,9 +652,8 @@ void mlx4_set_sq_sizes(struct mlx4_qp *qp, struct ibv_qp_cap *cap,
 	}
 
 	qp->sq.max_gs	     = wqe_size / sizeof (struct mlx4_wqe_data_seg);
-	cap->max_send_sge    = min(ctx->max_sge, qp->sq.max_gs);
-	qp->sq.max_post	     = min(ctx->max_qp_wr,
-				   qp->sq.wqe_cnt - qp->sq_spare_wqes);
+	cap->max_send_sge    = qp->sq.max_gs;
+	qp->sq.max_post	     = qp->sq.wqe_cnt - qp->sq_spare_wqes;
 	cap->max_send_wr     = qp->sq.max_post;
 
 	/*
