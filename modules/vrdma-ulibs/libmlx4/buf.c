@@ -47,12 +47,12 @@
  * point in doing it here, because the rest of libibverbs isn't going
  * to be fork-safe anyway.
  */
-int ibv_dontfork_range(void *base, size_t size)
+static int ibv_dontfork_range(void *base, size_t size)
 {
 	return 0;
 }
 
-int ibv_dofork_range(void *base, size_t size)
+static int ibv_dofork_range(void *base, size_t size)
 {
 	return 0;
 }
@@ -61,17 +61,19 @@ int ibv_dofork_range(void *base, size_t size)
 
 int mlx4_alloc_buf(struct mlx4_buf *buf, size_t size, int page_size)
 {
-	int ret;
+	int ret, i;
 
 	buf->length = align(size, page_size);
-	buf->buf = mmap(NULL, buf->length, PROT_READ | PROT_WRITE,
-			MAP_PRIVATE | MAP_ANON, -1, 0);
+	/* buf->buf = mmap(NULL, buf->length, PROT_READ | PROT_WRITE, */
+	/* 		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0); */
+	buf->buf = malloc(buf->length);
 	if (buf->buf == MAP_FAILED)
 		return errno;
 
 	ret = ibv_dontfork_range(buf->buf, size);
 	if (ret)
-		munmap(buf->buf, buf->length);
+		free(buf->buf);
+		/* munmap(buf->buf, buf->length); */
 
 	return ret;
 }
@@ -79,5 +81,6 @@ int mlx4_alloc_buf(struct mlx4_buf *buf, size_t size, int page_size)
 void mlx4_free_buf(struct mlx4_buf *buf)
 {
 	ibv_dofork_range(buf->buf, buf->length);
-	munmap(buf->buf, buf->length);
+	/* munmap(buf->buf, buf->length); */
+	free(buf->buf);
 }
