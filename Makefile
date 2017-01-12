@@ -597,11 +597,6 @@ bsd += bsd/sys/xdr/xdr_array.o
 bsd += bsd/sys/xdr/xdr_mem.o
 bsd += bsd/sys/xen/evtchn.o
 
-# virtual RDMA kernel drivers
-$(out)/bsd/sys/ofed/%.o: INCLUDES += -isystem bsd/sys/ofed/include
-bsd += bsd/sys/ofed/drivers/infiniband/core/verbs.o
-bsd += bsd/sys/ofed/drivers/infiniband/core/device.o
-
 ifeq ($(arch),x64)
 $(out)/bsd/%.o: COMMON += -DXEN -DXENHVM
 bsd += bsd/sys/xen/gnttab.o
@@ -802,8 +797,10 @@ drivers += drivers/pci-bridge.o
 drivers += drivers/driver.o
 
 $(out)/drivers/virtio-rdma.o: INCLUDES += -isystem bsd/sys/ofed/include
+$(out)/drivers/virtio-rdma.o: INCLUDES += -isystem bsd/sys/ofed/drivers/hw
 $(out)/drivers/virtio-rdma.o: INCLUDES += -isystem modules/vrdma-ulibs/libibverbs/include
 $(out)/arch/$(arch)/arch-setup.o: INCLUDES += -isystem bsd/sys/ofed/include
+$(out)/arch/$(arch)/arch-setup.o: INCLUDES += -isystem bsd/sys/ofed/drivers/hw
 $(out)/arch/$(arch)/arch-setup.o: INCLUDES += -isystem modules/vrdma-ulibs/libibverbs/include
 ifeq ($(arch),x64)
 drivers += $(libtsm)
