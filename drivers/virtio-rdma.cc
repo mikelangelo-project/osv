@@ -367,7 +367,7 @@ int rdma::do_hcall(struct hcall_queue *hvq, const struct hcall *hcall_p,
     int ret = 0;
     uint32_t flags = hdr->flags;
 
-    debug("vRDMA: do_hcall\n");
+    debug("vRDMA: do_hcall, npargs: %d\n", npargs);
 
     hvq->vq->init_sg();
     // add header
@@ -901,13 +901,11 @@ struct rdma::hyv_udata_translate* rdma::udata_translate_create(hyv_udata *udata,
     }
 
     for (i = 0; i < udata_gvm_num; i++) {
-        __u64 *va = (__u64 *)&udata->data[udata_gvm[i].udata_offset];
-        umem[i] =
-            pin_user_mem(*va & udata_gvm[i].mask, udata_gvm[i].size,
-                     &chunks[i].data, &chunks[i].n, true);
-        if (IS_ERR(umem[i])) {
+        unsigned long *va = (unsigned long *)&udata->data[udata_gvm[i].udata_offset];
+        ret = pin_user_mem(*va & udata_gvm[i].mask, udata_gvm[i].size,
+                     &chunks[i].data, &chunks[i].n);
+        if (ret) {
             debug("could not pin user memory\n");
-            ret = PTR_ERR(umem[i]);
             goto fail_pin;
         }
 
@@ -920,8 +918,11 @@ struct rdma::hyv_udata_translate* rdma::udata_translate_create(hyv_udata *udata,
             (hyv_udata_translate*) kmalloc(sizeof(*udata_translate) * udata_gvm_num +
                 sizeof(hyv_user_mem_chunk) * chunks_total,
                 GFP_KERNEL);
+        memset(udata_translate, 0, sizeof(*udata_translate) * udata_gvm_num +
+               sizeof(hyv_user_mem_chunk) * chunks_total);
     } else {
         udata_translate = (hyv_udata_translate*) kmalloc(sizeof(*udata_translate), GFP_KERNEL);
+        memset(udata_translate, 0, sizeof(*udata_translate));
     }
     if (!udata_translate) {
         debug("could not alloc udata translate\n");
@@ -955,16 +956,10 @@ fail:
 
 #define PAGE_ALIGN(addr)        (((addr)+PAGE_SIZE-1) & ~PAGE_MASK)
 #define page_to_pfn(addr)       (virt_to_phys(addr)) >> PAGE_SHIFT
-struct rdma::hyv_user_mem* rdma::pin_user_mem(unsigned long va, unsigned long size, hyv_user_mem_chunk **chunks, unsigned long *n_chunks, bool write)
+int rdma::pin_user_mem(unsigned long va, unsigned long size, hyv_user_mem_chunk **chunks, unsigned long *n_chunks)
 {
-    struct hyv_user_mem *umem;
-    unsigned long i, offset, cur_va;
-    unsigned long n_pages, pages_pinned = 0;
-    hyv_user_mem_chunk *chunk_tmp = NULL;
-    struct page **pages;
+    unsigned long offset, n_pages;
     int ret;
-
-    debug("va: 0x%lx, size: %lu, write: %d\n", va, size, write);
 
     offset = va & PAGE_MASK;
     n_pages = PAGE_ALIGN(size) >> PAGE_SHIFT;
@@ -976,85 +971,15 @@ struct rdma::hyv_user_mem* rdma::pin_user_mem(unsigned long va, unsigned long si
         goto fail;
     }
 
-    pages = (page**) malloc(sizeof(*pages) * n_pages);
-    if (!pages) {
-        debug("could not allocate page array\n");
-        ret = -ENOMEM;
-        goto fail;
-    }
+    chunks[0] =  (hyv_user_mem_chunk*) kmalloc(sizeof(hyv_user_mem_chunk), GFP_KERNEL);
+    chunks[0]->addr = (virt_to_phys((void*)va)) + offset;
+    chunks[0]->size = size;
+    *n_chunks = 1;
 
-    for (cur_va = va; n_pages != pages_pinned;
-         cur_va += (size * PAGE_SIZE)) {
-        pages[pages_pinned] = (page*) memory::alloc_phys_contiguous_aligned(size, PAGE_SIZE);
-        if (!cur_va) {
-            debug("could not pin pages (%d)\n", ret);
-            ret = -EFAULT;
-            goto fail_get_user;
-        }
-        pages_pinned ++;
-    }
+    return 0;
 
-    if (chunks) {
-        *n_chunks = n_pages;
-
-        debug("n_chunks: %lu\n", *n_chunks);
-
-        chunk_tmp = (hyv_user_mem_chunk*) kmalloc(sizeof(*chunk_tmp) * *n_chunks, GFP_KERNEL);
-        if (!chunk_tmp) {
-            debug("could not allocate chunks!\n");
-            ret = -ENOMEM;
-            goto fail_get_user;
-        }
-
-       chunk_tmp[0].addr = (virt_to_phys(pages[0])) + offset;
-       if (n_pages == 1) {
-            chunk_tmp[0].size = size;
-        } else {
-            unsigned long end_offset;
-
-            chunk_tmp[0].size = PAGE_SIZE - offset;
-            for (i = 1; i < n_pages; ++i) {
-                    chunk_tmp[i].addr = virt_to_phys(pages[i]);
-                    chunk_tmp[i].size = PAGE_SIZE;
-            }
-
-            /* cut last chunk to real size */
-            end_offset = ((size - chunk_tmp[0].size) & PAGE_MASK);
-            if (end_offset) {
-                chunk_tmp[n_pages].size -=
-                    PAGE_SIZE - end_offset;
-            }
-        }
-
-        for (i = 0; i < *n_chunks; i++) {
-            debug("-- chunk[%lu] --\n", i);
-            debug("virt_addr: 0x%llx\n", pages[i]);
-            debug("phys_addr: 0x%llx\n", chunk_tmp[i].addr);
-            debug("size: %llu\n", chunk_tmp[i].size);
-        }
-
-        *chunks = chunk_tmp;
-    }
-
-    umem = (hyv_user_mem*) kmalloc(sizeof(*umem), GFP_KERNEL);
-    if (!umem) {
-        debug("could not allocate user mem struct\n");
-        ret = -ENOMEM;
-        goto fail_chunk;
-    }
-    umem->pages = pages;
-    umem->n_pages = n_pages;
-
-    return umem;
-fail_chunk:
-    kfree(chunk_tmp);
-fail_get_user:
-    for (i = 0; i < pages_pinned; i++) {
-        free(pages[i]);
-    }
-    free(pages);
 fail:
-    return (hyv_user_mem*) ERR_PTR(ret);
+    return ret;
 }
 
 
@@ -1068,7 +993,6 @@ struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, s
     uint32_t i;
     unsigned long n_chunks;
     hyv_udata *udata;
-    bool write;
     int ret;
     int udata_gvm_num = 0;
     struct hyv_udata_gvm *udata_gvm = NULL;
@@ -1077,8 +1001,6 @@ struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, s
 
     BUG_ON(user_va != io_va);
 
-    write = !!(access & ~IB_ACCESS_REMOTE_READ);
-
     hmr = (hyv_mr*) kmalloc(sizeof(*hmr), GFP_KERNEL);
     if (!hmr) {
         debug("could not allocate mr\n");
@@ -1086,10 +1008,9 @@ struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, s
         goto fail;
     }
 
-    umem = pin_user_mem(user_va, size, &umem_chunks, &n_chunks, write);
-    if (IS_ERR(umem)) {
+    ret = pin_user_mem(user_va, size, &umem_chunks, &n_chunks);
+    if (ret) {
         debug("could not pin user memory\n");
-        ret = PTR_ERR(umem);
         goto fail_mr;
     }
 
@@ -1228,7 +1149,6 @@ struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ib
     udata_gvm[1].type = HYV_IB_UMEM;
 
     udata_gvm_num = ARRAY_SIZE(udata_gvm);
-    debug("entries: %d, udata_gvm_num: %d\n", umem_entries, udata_gvm_num);
     hcq = (hyv_cq*) kmalloc(sizeof(*hcq), GFP_KERNEL);
     if (!hcq) {
         debug("could not allocate cq\n");

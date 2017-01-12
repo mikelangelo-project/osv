@@ -582,8 +582,8 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     int udata_copy_out(hyv_udata *udata, struct ib_udata *ibudata);
     struct hyv_mmap* mmap_prepare(uint32_t size, uint32_t key);
     void mmap_unprepare(struct hyv_mmap *mm);
-    struct hyv_user_mem* pin_user_mem(unsigned long va, unsigned long size,
-                                      hyv_user_mem_chunk **chunks, unsigned long *n_chunks, bool write);
+    int pin_user_mem(unsigned long va, unsigned long size,
+                                      hyv_user_mem_chunk **chunks, unsigned long *n_chunks);
     int vrdma_mmap(struct hyv_mmap *mm);
     int vrdma_unmap(struct hyv_mmap *mm);
 
