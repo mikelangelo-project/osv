@@ -400,9 +400,9 @@ int ibv_cmd_reg_mr(struct ibv_pd *pd, void *addr, size_t length,
 	ibmr = rdma_drv->vrdma_reg_mr(cmd->start, cmd->length, cmd->hca_va,
 						   cmd->access_flags, &ibudata);
 
-	mr->handle  = resp->mr_handle;
-	mr->lkey    = resp->lkey;
-	mr->rkey    = resp->rkey;
+	mr->handle  = rdma_drv->hmr->host_handle;
+	mr->lkey    = ibmr->lkey;
+	mr->rkey    = ibmr->rkey;
 	mr->context = pd->context;
 
 	return 0;
@@ -982,13 +982,8 @@ int ibv_cmd_create_qp(struct ibv_pd *pd,
 	}
 	ibqp->uobject = &uqpobj->uevent.uobject;
 
-	// if (write(pd->context->cmd_fd, cmd, cmd_size) != cmd_size)
-	// 	return errno;
-
-	// VALGRIND_MAKE_MEM_DEFINED(resp, resp_size);
-
-	qp->handle 		  = resp->qp_handle;
-	qp->qp_num 		  = resp->qpn;
+	qp->handle 		  = rdma_drv->hqp->host_handle;
+	qp->qp_num 		  = ibqp->qp_num;
 	qp->context		  = pd->context;
 
 	if (abi_ver > 3) {

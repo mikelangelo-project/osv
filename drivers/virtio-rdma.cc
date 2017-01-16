@@ -1070,7 +1070,6 @@ struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, s
             memcpy(&result, &_args->result.value, sizeof(result));
 
         free(_args);
-        return (ib_mr*) ERR_PTR(ret);
     }
     if (ret || res.mr_handle < 0) {
         debug("could not reg user mr on host\n");
