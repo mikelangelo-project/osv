@@ -690,9 +690,10 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
     }
 
     // do mmap on the host
+    // triggerred by fd event in uverbs
     ret = vrdma_mmap(vuctx->uar_mmap);
-	if (ret) {
-        debug("could not remap pfn range\n");
+    if (ret) {
+        debug("could not mmap on host\n");
         goto fail;
     }
 
@@ -1250,7 +1251,7 @@ struct ib_qp* rdma::vrdma_create_qp(struct ib_qp_init_attr *ibinit_attr, struct 
     unsigned long buf_size;
     unsigned long sq_wqe_cnt, sq_wqe_shift;
     unsigned long rq_wqe_cnt, rq_wqe_shift, rq_max_gs;
-    hyv_create_qp_result *res;
+    hyv_create_qp_result *resp;
     int ret;
     struct hyv_cq *send_cq, *recv_cq;
     struct hyv_srq *srq = NULL;
@@ -1310,8 +1311,8 @@ struct ib_qp* rdma::vrdma_create_qp(struct ib_qp_init_attr *ibinit_attr, struct 
         goto fail;
     }
 
-    res = (hyv_create_qp_result*) kmalloc(sizeof(*res), GFP_KERNEL);
-    if (!res) {
+    resp = (hyv_create_qp_result*) kmalloc(sizeof(*resp), GFP_KERNEL);
+    if (!resp) {
         debug("could not allocate result");
         ret = -ENOMEM;
         goto fail_qp;
@@ -1356,7 +1357,7 @@ struct ib_qp* rdma::vrdma_create_qp(struct ib_qp_init_attr *ibinit_attr, struct 
 
     {
         const struct hcall_parg pargs[] = {
-            { res, sizeof(*res) } ,
+            { resp, sizeof(*resp) } ,
             { udata, (uint32_t) (sizeof(*udata) + (uint32_t) ( udata->in + udata->out)) } ,
             { 	udata_translate,
                 (uint32_t) (sizeof(*udata_translate) * (udata_gvm_num ? udata_gvm_num : 1)) + \
@@ -1390,15 +1391,16 @@ struct ib_qp* rdma::vrdma_create_qp(struct ib_qp_init_attr *ibinit_attr, struct 
         ret = ret ? ret : hret;
         goto fail_udata_translate;
     }
-    hqp->host_handle = res->qp_handle;
-    hqp->ibqp.qp_num = res->qpn;
-    ibinit_attr->cap.max_send_wr     = res->cap.max_send_wr;
-    ibinit_attr->cap.max_recv_wr     = res->cap.max_recv_wr;
-    ibinit_attr->cap.max_send_sge    = res->cap.max_send_sge;
-    ibinit_attr->cap.max_recv_sge    = res->cap.max_recv_sge;
-    ibinit_attr->cap.max_inline_data = res->cap.max_inline_data;
+    // abi_ver = 6
+    ibinit_attr->cap.max_send_wr     = resp->cap.max_send_wr;
+    ibinit_attr->cap.max_recv_wr     = resp->cap.max_recv_wr;
+    ibinit_attr->cap.max_send_sge    = resp->cap.max_send_sge;
+    ibinit_attr->cap.max_recv_sge    = resp->cap.max_recv_sge;
+    ibinit_attr->cap.max_inline_data = resp->cap.max_inline_data;
+    hqp->host_handle = resp->qp_handle;
+    hqp->ibqp.qp_num = resp->qpn;
 
-    debug("res->qpn: %d\n", res->qpn);
+    debug("resp->qpn: %d\n", resp->qpn);
 
     //udata_translate_destroy(udata_translate);
 
@@ -1409,7 +1411,7 @@ struct ib_qp* rdma::vrdma_create_qp(struct ib_qp_init_attr *ibinit_attr, struct 
         goto fail_alloc;
     }
 
-    kfree(res);
+    kfree(resp);
 
     return &hqp->ibqp;
 
@@ -1424,14 +1426,14 @@ fail_udata:
     //udata_destroy(udata);
     kfree(udata);
 fail_res:
-    kfree(res);
+    kfree(resp);
 fail_qp:
     kfree(hqp);
 fail:
     return (ib_qp *)ERR_PTR(ret);
 
 fail_alloc:
-    kfree(res);
+    kfree(resp);
     //hyv_ibv_destroy_qp(&qp->ibqp);
     return (ib_qp *)ERR_PTR(ret);
 }

@@ -510,11 +510,8 @@ int ibv_cmd_create_cq(struct ibv_context *context, int cqe,
 	atomic_set(&ibcq->usecnt, 0);
 
 	ucqobj->uobject.object = (void*) ibcq;
-	resp->cq_handle = ucqobj->uobject.id;
-	resp->cqe       = ibcq->cqe;
-
-	cq->handle  = resp->cq_handle;
-	cq->cqe     = resp->cqe;
+	cq->handle  = ucqobj->uobject.id;
+	cq->cqe     = ibcq->cqe;
 	cq->context = context;
 
 err_copy:
@@ -985,30 +982,6 @@ int ibv_cmd_create_qp(struct ibv_pd *pd,
 	qp->handle 		  = rdma_drv->hqp->host_handle;
 	qp->qp_num 		  = ibqp->qp_num;
 	qp->context		  = pd->context;
-
-	if (abi_ver > 3) {
-		attr->cap.max_recv_sge    = resp->max_recv_sge;
-		attr->cap.max_send_sge    = resp->max_send_sge;
-		attr->cap.max_recv_wr     = resp->max_recv_wr;
-		attr->cap.max_send_wr     = resp->max_send_wr;
-		attr->cap.max_inline_data = resp->max_inline_data;
-	}
-
-	if (abi_ver == 4) {
-		struct ibv_create_qp_resp_v4 *resp_v4 =
-			(struct ibv_create_qp_resp_v4 *) resp;
-
-		memmove((void *) resp + sizeof *resp,
-			(void *) resp_v4 + sizeof *resp_v4,
-			resp_size - sizeof *resp);
-	} else if (abi_ver <= 3) {
-		struct ibv_create_qp_resp_v3 *resp_v3 =
-			(struct ibv_create_qp_resp_v3 *) resp;
-
-		memmove((void *) resp + sizeof *resp,
-			(void *) resp_v3 + sizeof *resp_v3,
-			resp_size - sizeof *resp);
-	}
 
 err_put:
 	// if (xrcd)
