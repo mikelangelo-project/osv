@@ -170,8 +170,8 @@ struct rdma::hyv_udata* rdma::udata_create(struct ib_udata *ibudata)
         goto fail;
     }
 
-    udata_size = sizeof(*udata) + inlen + ibudata->outlen;
     inlen = ibudata->inlen - sizeof(struct ib_uverbs_cmd_hdr);
+    udata_size = sizeof(*udata) + inlen + ibudata->outlen;
 
     udata = (rdma::hyv_udata *) kmalloc(udata_size, GFP_KERNEL);
     if (!udata) {
@@ -989,12 +989,12 @@ struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, s
     hyv_reg_user_mr_result res;
     hyv_user_mem_chunk *umem_chunks;
     struct hyv_udata_translate *udata_translate;
-    struct hyv_user_mem *umem;
+    struct hyv_user_mem *umem=NULL;
     uint32_t n_chunks_total;
     uint32_t i;
     unsigned long n_chunks;
     hyv_udata *udata;
-    int ret;
+    int ret=0;
     int udata_gvm_num = 0;
     struct hyv_udata_gvm *udata_gvm = NULL;
 
@@ -1041,7 +1041,7 @@ struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, s
     }
 
     {
-        int ret, result;
+        int ret;
         const struct hcall_parg pargs[] = { { umem_chunks, (uint32_t) (n_chunks * sizeof(*umem_chunks)) } ,
                                             { udata, (uint32_t) (sizeof(*udata) + (uint32_t) ( udata->in + udata->out)) } ,
                                             { 	udata_translate,
@@ -1068,7 +1068,7 @@ struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, s
                             sizeof(_args->copy_args), pargs, (sizeof (pargs) / sizeof ((pargs)[0])),
                             &_args->result.hdr, sizeof(_args->result));
         if (!ret)
-            memcpy(&result, &_args->result.value, sizeof(result));
+            memcpy(&res, &_args->result.value, sizeof(res));
 
         free(_args);
     }
