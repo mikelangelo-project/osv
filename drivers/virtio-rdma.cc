@@ -683,9 +683,9 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
     }
 
     vuctx->bf_mmap = mmap_prepare(PAGE_SIZE, MLX4_IB_MMAP_BLUE_FLAME_PAGE << PAGE_SHIFT);
-    if (IS_ERR(vuctx->uar_mmap)) {
+    if (IS_ERR(vuctx->bf_mmap)) {
         debug("could not prepare bf mmap\n");
-        ret = PTR_ERR(vuctx->uar_mmap);
+        ret = PTR_ERR(vuctx->bf_mmap);
         goto fail_uar_mmap;
     }
 
@@ -694,10 +694,18 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
     ret = vrdma_mmap(vuctx->uar_mmap);
     if (ret) {
         debug("could not mmap on host\n");
-        goto fail;
+        goto fail_mmap;
+    }
+
+    ret = vrdma_mmap(vuctx->bf_mmap);
+    if (ret) {
+        debug("could not mmap on host\n");
+        goto fail_mmap;
     }
 
     return &hyv_uctx->ibuctx;
+fail_mmap:
+    mmap_unprepare(vuctx->bf_mmap);
 fail_uar_mmap:
     mmap_unprepare(vuctx->uar_mmap);
 fail_vuctx:
