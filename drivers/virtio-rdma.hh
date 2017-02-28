@@ -10,6 +10,7 @@
 
 #include <osv/condvar.h>
 #include <osv/device.h>
+#include <osv/spinlock.h>
 #include <asm/atomic.h>
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_user_verbs.h>
@@ -106,7 +107,7 @@ public:
                                     name("virtio-rdma-eventq")) {};
         vring *vq;
         sched::thread event_poll_task;
-        //spinlock_t lock;
+        spinlock_t lock;
     };
 
     // rewritten from hcall_vq struct
@@ -118,7 +119,7 @@ public:
         vring *vq;
         void *priv;
         sched::thread hcall_poll_task;
-//        spinlock_t lock;
+        spinlock_t lock;
     };
 
 typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
@@ -140,7 +141,7 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
 
         struct hyv_event_queue *evt_queue;   // event list that will be sent to the host and back
         u64 cback; // number of callbacks ??
-//        spinlock_t evt_lock;
+        spinlock_t evt_lock;
     };
 
     struct hcall_header

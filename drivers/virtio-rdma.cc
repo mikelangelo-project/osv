@@ -616,7 +616,7 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
         goto fail;
     }
     INIT_LIST_HEAD(&hyv_uctx->mmap_list);
-    spin_lock_init(&hyv_uctx->mmap_lock);
+    spinlock_init(&hyv_uctx->mmap_lock);
 
     udata = udata_create(ibudata);
     if (IS_ERR(udata)) {

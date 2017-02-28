@@ -50,7 +50,7 @@
 //#include <linux/workqueue.h>
 
 #include <asm/atomic.h>
-#include <linux/spinlock.h>
+#include <osv/spinlock.h>
 #include <linux/list.h>
 #include <bsd/x64/machine/atomic.h>
 #include <osv/mutex.h>
