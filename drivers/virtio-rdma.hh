@@ -581,7 +581,7 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
                                                        uint32_t *n_chunks_total);
     struct hyv_udata* udata_create(struct ib_udata *ibudata);
     int udata_copy_out(hyv_udata *udata, struct ib_udata *ibudata);
-    struct hyv_mmap* mmap_prepare(uint32_t size, uint32_t key);
+    struct hyv_mmap* mmap_prepare(void **addr, uint32_t size, uint32_t key);
     void mmap_unprepare(struct hyv_mmap *mm);
     struct hyv_user_mem* pin_user_mem(unsigned long va, unsigned long size,
                                       hyv_user_mem_chunk **chunks, unsigned long *n_chunks, bool write);
@@ -592,7 +592,7 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     int vrdma_open_device(int *result);
     int vrdma_query_device(ib_uverbs_query_device_resp *attr, int *result);
     int vrdma_query_port(ib_uverbs_query_port_resp *attr, int port_num, int *result);
-    struct ib_ucontext *vrdma_alloc_ucontext(struct ib_udata *ibudata);
+    struct ib_ucontext *vrdma_alloc_ucontext(struct ib_udata *ibudata, void **uar, void **bf_page);
     struct ib_pd* vrdma_alloc_pd(struct ib_udata *ibudata);
     struct ib_mr* vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, struct ib_udata *ibudata);
     struct ib_cq* vrdma_create_cq(int entries, int vector, struct ib_udata *udata);

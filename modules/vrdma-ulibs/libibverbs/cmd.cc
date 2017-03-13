@@ -155,7 +155,7 @@ static void init_uobj(struct ib_uobject *uobj, u64 user_handle)
 // 	return 0;
 // }
 
-int ibv_cmd_get_context(struct ibv_context *context, struct ibv_get_context *cmd,
+int ibv_cmd_get_context(struct ibv_context *context, void **uar, void **bf_page, struct ibv_get_context *cmd,
 			size_t cmd_size, struct ibv_get_context_resp *resp,
 			size_t resp_size)
 {
@@ -173,7 +173,7 @@ int ibv_cmd_get_context(struct ibv_context *context, struct ibv_get_context *cmd
 			   cmd_size - (sizeof(*cmd) - sizeof(struct ib_uverbs_cmd_hdr)),
 			   resp_size - sizeof(*resp));
 
-	ucontext = rdma_drv->vrdma_alloc_ucontext(&ibudata);
+	ucontext = rdma_drv->vrdma_alloc_ucontext(&ibudata, uar, bf_page);
 	if (IS_ERR(ucontext)) {
 		ret = PTR_ERR(ucontext);
 	}
@@ -362,8 +362,6 @@ int ibv_cmd_reg_mr(struct ibv_pd *pd, void *addr, size_t length,
 		   size_t cmd_size,
 		   struct ibv_reg_mr_resp *resp, size_t resp_size)
 {
-	struct ib_uverbs_reg_mr      kcmd;
-	struct ib_uverbs_reg_mr_resp kresp;
 	struct ib_udata              ibudata;
 	struct ib_uobject           *ibuobj;
 	struct ib_mr                *ibmr;
@@ -476,11 +474,6 @@ int ibv_cmd_create_cq(struct ibv_context *context, int cqe,
 			   (unsigned long) cmd->response + sizeof(*resp),
 			   cmd_size - (sizeof(*cmd) - sizeof(struct ib_uverbs_cmd_hdr)),
 			   resp_size - sizeof(*resp));
-
-	if (cmd->comp_vector >= context->num_comp_vectors) {
-		ret = -EINVAL;
-		goto err;
-	}
 
 	ucqobj = (ib_ucq_object*) kmalloc(sizeof(struct ib_ucq_object), GFP_KERNEL);
 	if (!ucqobj) {
@@ -1093,11 +1086,6 @@ int ibv_cmd_modify_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
 	ibattr = (ib_qp_attr*) kmalloc(sizeof(*ibattr), GFP_KERNEL);
 	if (!ibattr)
 		return -ENOMEM;
-
-	debug("ibv_cmd_modify_qp\n");
-
-	debug("attr_mask: %d\n", attr_mask);
-	debug("cmd.attr_mask: %d\n", cmd->attr_mask);
 
 	IBV_INIT_CMD(cmd, cmd_size, MODIFY_QP);
 

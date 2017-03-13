@@ -124,7 +124,6 @@ default_symver(__ibv_get_device_guid, ibv_get_device_guid);
 
 struct ibv_context *__ibv_open_device(struct ibv_device *device)
 {
-	char *devpath;
 	int cmd_fd = -1;
 	struct ibv_context *context;
 
@@ -158,11 +157,6 @@ int __ibv_close_device(struct ibv_context *context)
 	}
 
 	context->device->ops.free_context(context);
-
-	close(async_fd);
-	close(cmd_fd);
-	if (abi_ver <= 2)
-		close(cq_fd);
 
 	return 0;
 }

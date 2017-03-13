@@ -59,7 +59,7 @@ typedef struct ibv_device *(*ibv_driver_init_func)(const char *uverbs_sys_path,
 						   int abi_version);
 
 void ibv_register_driver(const char *name, ibv_driver_init_func init_func);
-int ibv_cmd_get_context(struct ibv_context *context, struct ibv_get_context *cmd,
+int ibv_cmd_get_context(struct ibv_context *context, struct ibv_get_context *cmd, void **uar, void **bf_page,
 			size_t cmd_size, struct ibv_get_context_resp *resp,
 			size_t resp_size);
 int ibv_cmd_query_device(struct ibv_context *context,

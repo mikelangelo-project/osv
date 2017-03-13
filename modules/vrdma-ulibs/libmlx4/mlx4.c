@@ -138,7 +138,7 @@ static struct ibv_context *mlx4_alloc_context(struct ibv_device *ibdev, int cmd_
 	context->ibv_ctx.cmd_fd = cmd_fd;
 
 	if (dev->abi_version <= MLX4_UVERBS_NO_DEV_CAPS_ABI_VERSION) {
-		if (ibv_cmd_get_context(&context->ibv_ctx, &cmd, sizeof cmd,
+		if (ibv_cmd_get_context(&context->ibv_ctx, &context->uar, &context->bf_page, &cmd, sizeof cmd,
 					&resp_v3.ibv_resp, sizeof resp_v3))
 			goto err_free;
 
@@ -146,7 +146,7 @@ static struct ibv_context *mlx4_alloc_context(struct ibv_device *ibdev, int cmd_
 		bf_reg_size	  = resp_v3.bf_reg_size;
 		context->cqe_size = sizeof (struct mlx4_cqe);
 	} else  {
-		if (ibv_cmd_get_context(&context->ibv_ctx, &cmd, sizeof cmd,
+		if (ibv_cmd_get_context(&context->ibv_ctx, &context->uar, &context->bf_page, &cmd, sizeof cmd,
 					&resp.ibv_resp, sizeof resp))
 			goto err_free;
 
@@ -170,29 +170,15 @@ static struct ibv_context *mlx4_alloc_context(struct ibv_device *ibdev, int cmd_
 
 	pthread_mutex_init(&context->db_list_mutex, NULL);
 
-	/* context->uar = mmap(NULL, to_mdev(ibdev)->page_size, PROT_WRITE, */
-	/* 		    MAP_SHARED, cmd_fd, 0); */
-	context->uar = malloc(to_mdev(ibdev)->page_size);
-    if (!context->uar) {
-		goto err_free;
-	}
-
 	if (bf_reg_size) {
-		/* context->bf_page = mmap(NULL, to_mdev(ibdev)->page_size, */
-		/* 			PROT_WRITE, MAP_SHARED, cmd_fd, */
-		/* 			to_mdev(ibdev)->page_size); */
-		context->bf_page = malloc(to_mdev(ibdev)->page_size);
-		if (!context->bf_page) {
-			fprintf(stderr, PFX "Warning: BlueFlame available, "
-				"but failed to mmap() BlueFlame page.\n");
-				context->bf_page     = NULL;
-				context->bf_buf_size = 0;
-		} else {
-			context->bf_buf_size = bf_reg_size / 2;
-			context->bf_offset   = 0;
-			pthread_spin_init(&context->bf_lock, PTHREAD_PROCESS_PRIVATE);
-		}
+		context->bf_buf_size = bf_reg_size / 2;
+		context->bf_offset   = 0;
+		pthread_spin_init(&context->bf_lock, PTHREAD_PROCESS_PRIVATE);
 	} else {
+		if(!context->bf_page) {
+			// TODO: unmap the page
+			// vrdma_unmap(context->bf_page);
+		}
 		context->bf_page     = NULL;
 		context->bf_buf_size = 0;
 	}
@@ -275,7 +261,6 @@ found:
 #ifdef HAVE_IBV_REGISTER_DRIVER
 static __attribute__((constructor)) void mlx4_register_driver(void)
 {
-	printf("mlx4_register_diver\n");
 	ibv_register_driver("mlx4", mlx4_driver_init);
 }
 #else

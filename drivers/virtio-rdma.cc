@@ -435,7 +435,7 @@ hw_driver* rdma::probe(hw_device* dev)
     return virtio::probe<rdma, VIRTIO_RDMA_DEVICE_ID>(dev);
 }
 
-struct rdma::hyv_mmap* rdma::mmap_prepare(uint32_t size, uint32_t key)
+struct rdma::hyv_mmap* rdma::mmap_prepare(void **addr, uint32_t size, uint32_t key)
 {
     struct hyv_mmap *gmm;
     int ret;
@@ -449,7 +449,7 @@ struct rdma::hyv_mmap* rdma::mmap_prepare(uint32_t size, uint32_t key)
         goto fail;
     }
 
-    gmm->addr = malloc(size);
+    gmm->addr = *addr = malloc(size);
     gmm->key = key;
     gmm->size = size;
     gmm->mapped = false;
@@ -467,7 +467,6 @@ fail_gmm:
     kfree(gmm);
 fail:
     return (hyv_mmap*) ERR_PTR(ret);
-
 }
 
 void rdma::mmap_unprepare(struct hyv_mmap *mm)
@@ -593,14 +592,13 @@ int rdma::vrdma_unmap(struct hyv_mmap *mm)
 }
 // Implementations of verb calls using hypercall
 
-struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
+struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata, void **uar, void **bf_page)
 {
     // TODO: possibly support other providers
     // virtmlx4_alloc_ucontext
     // struct ib_ucontext *ibuctx; // uctx
 
     struct virtmlx4_ucontext *vuctx;
-
     int ret, hret;
 
     debug("vrdma_ibv_alloc_ucontext\n");
@@ -675,14 +673,14 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata)
     }
     hyv_uctx->priv = vuctx;
 
-    vuctx->uar_mmap = mmap_prepare(PAGE_SIZE, MLX4_IB_MMAP_UAR_PAGE);
+    vuctx->uar_mmap = mmap_prepare(uar, PAGE_SIZE, MLX4_IB_MMAP_UAR_PAGE);
     if (IS_ERR(vuctx->uar_mmap)) {
         debug("could not prepare uar mmap\n");
         ret = PTR_ERR(vuctx->uar_mmap);
         goto fail_vuctx;
     }
 
-    vuctx->bf_mmap = mmap_prepare(PAGE_SIZE, MLX4_IB_MMAP_BLUE_FLAME_PAGE << PAGE_SHIFT);
+    vuctx->bf_mmap = mmap_prepare(bf_page, PAGE_SIZE, MLX4_IB_MMAP_BLUE_FLAME_PAGE << PAGE_SHIFT);
     if (IS_ERR(vuctx->bf_mmap)) {
         debug("could not prepare bf mmap\n");
         ret = PTR_ERR(vuctx->bf_mmap);
@@ -1256,8 +1254,10 @@ struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ib
         struct _args_t { struct hyv_ibv_create_cqX_copy_args copy_args; struct vrdma_hypercall_result48 result; } *_args;
 
         _args = (struct _args_t *) malloc(sizeof(*_args));
-
-        if (!_args) { ret = -ENOMEM; goto fail_udata_translate;}
+        if (!_args) {
+            ret = -ENOMEM;
+            goto fail_udata_translate;
+        }
 
         _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_CREATE_CQ, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
         memcpy(&_args->copy_args.guest_handle, hcq, sizeof(*hcq));
