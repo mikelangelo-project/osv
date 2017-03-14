@@ -63,10 +63,10 @@ int mlx4_alloc_buf(struct mlx4_buf *buf, size_t size, int page_size)
 {
 	buf->length = align(size, page_size);
 
-	if(posix_memalign(&buf->buf, 0x1000, size))
+	if(posix_memalign(&buf->buf, page_size, size))
 		return -1;
 
-	memset(buf->buf, 0, size);
+	memset(buf->buf, 0, buf->length);
 
 	return 0;
 }
