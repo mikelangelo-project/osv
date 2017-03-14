@@ -61,17 +61,14 @@ static int ibv_dofork_range(void *base, size_t size)
 
 int mlx4_alloc_buf(struct mlx4_buf *buf, size_t size, int page_size)
 {
-	int ret, i;
-
 	buf->length = align(size, page_size);
-	buf->buf = malloc(buf->length);
-	if (buf->buf == MAP_FAILED)
-		return errno;
 
-	posix_memalign(buf->buf, 0x1000, size);
+	if(posix_memalign(&buf->buf, 0x1000, size))
+		return -1;
+
 	memset(buf->buf, 0, size);
 
-	return ret;
+	return 0;
 }
 
 void mlx4_free_buf(struct mlx4_buf *buf)
