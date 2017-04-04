@@ -107,7 +107,7 @@ public:
                                     name("virtio-rdma-eventq")) {};
         vring *vq;
         sched::thread event_poll_task;
-        spinlock_t lock;
+        pthread_mutex_t lock;
     };
 
     // rewritten from hcall_vq struct
@@ -119,7 +119,8 @@ public:
         vring *vq;
         void *priv;
         sched::thread hcall_poll_task;
-        spinlock_t lock;
+        pthread_mutex_t lock;
+        pthread_cond_t cond;
     };
 
 typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
@@ -141,7 +142,7 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
 
         struct hyv_event_queue *evt_queue;   // event list that will be sent to the host and back
         u64 cback; // number of callbacks ??
-        spinlock_t evt_lock;
+        pthread_mutex_t evt_lock;
     };
 
     struct hcall_header

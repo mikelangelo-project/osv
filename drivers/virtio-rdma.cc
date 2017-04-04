@@ -86,6 +86,9 @@ rdma::rdma(pci::device& pci_dev)
     _vg->vq_hcall->vq->kick();
     _vg->vq_event->vq->kick();
 
+    pthread_mutex_init(&_hcall_queue.lock, NULL);
+    pthread_cond_init(&_hcall_queue.cond, NULL);
+
     register_ib_dev();
 
     _instance = this;
@@ -328,31 +331,35 @@ void rdma::handle_hcall()
 
     while(1)
     {
+        u32 len;
         // Wait for hcall queue (used elements)
         virtio_driver::wait_for_queue(vq, &vring::used_ring_not_empty);
 
-        u32 len;
-        debug("vRDMA: got hcall ack.\n");
+        pthread_mutex_lock(&_hcall_queue.lock);
 
-        while (struct hcall * hcall_p = (struct hcall *) vq->get_buf_elem(&len)) {
-            vq->get_buf_finalize();
-            if (hcall_p->async) {
-                debug("vRDMA: async hcall.\n");
+        // we have only one element each time
+        struct hcall * hcall_p = (struct hcall *) vq->get_buf_elem(&len);
+        vq->get_buf_finalize();
 
-                struct hcall_async *async =
-                    container_of(hcall_p, struct hcall_async,
-                         base);
-                if (async->cb) {
-                    //async->cbw(_vg->vq_hcall, async);
-                }
-                // kfree(async);
-            } else {
-                debug("vRDMA: sync hcall.\n");
-                // struct hcall_sync *sync =
-                //     container_of(hcall_p, struct hcall_sync,
-                //          base);
-                // complete(&hcall_sync->completion);
+        pthread_cond_signal(&_hcall_queue.cond);
+        pthread_mutex_unlock(&_hcall_queue.lock);
+
+        if (hcall_p->async) {
+            debug("vRDMA: async hcall.\n");
+
+            struct hcall_async *async =
+                container_of(hcall_p, struct hcall_async,
+                     base);
+            if (async->cb) {
+                //async->cbw(_vg->vq_hcall, async);
             }
+            // kfree(async);
+        } else {
+            debug("vRDMA: sync hcall.\n");
+            // struct hcall_sync *sync =
+            //     container_of(hcall_p, struct hcall_sync,
+            //          base);
+            // complete(&hcall_sync->completion);
         }
     }
 }
@@ -375,9 +382,11 @@ int rdma::do_hcall(struct hcall_queue *hvq, const struct hcall *hcall_p,
 
     // add parameter list
     for (i = 0; i < npargs; i++) {
-        debug("vRDAM: pargds[%d]: size: %d, addr: %p\n", i, pargs[i].size, pargs[i].ptr);
+        debug("vRDMA: pargds[%d]: size: %d, addr: %p\n", i, pargs[i].size, pargs[i].ptr);
         hvq->vq->add_out_sg(pargs[i].ptr, pargs[i].size);
     }
+
+    pthread_mutex_lock(&hvq->lock);
 
     hvq->vq->add_in_sg(hret, result_size);
 
@@ -389,7 +398,9 @@ int rdma::do_hcall(struct hcall_queue *hvq, const struct hcall *hcall_p,
         hvq->vq->kick();
     }
 
-    debug("vRDMA: do_hcall return: %d\n ", ret);
+    // wait until the worker thread got the vq ack
+    pthread_cond_wait(&hvq->cond, &hvq->lock);
+    pthread_mutex_unlock(&hvq->lock);
 
     return ret;
 }
@@ -1260,7 +1271,7 @@ struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ib
         }
 
         _args->copy_args.hdr = (struct hcall_header) { VIRTIO_HYV_IBV_CREATE_CQ, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
-        memcpy(&_args->copy_args.guest_handle, hcq, sizeof(*hcq));
+        _args->copy_args.guest_handle = (uint64_t) hcq;
         memcpy(&_args->copy_args.uctx_handle, &hyv_uctx->host_handle, sizeof(hyv_uctx->host_handle));
         memcpy(&_args->copy_args.entries, &entries, sizeof(entries));
         memcpy(&_args->copy_args.vector, &vector, sizeof(vector));
