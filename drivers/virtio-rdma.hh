@@ -121,6 +121,7 @@ public:
         sched::thread hcall_poll_task;
         pthread_mutex_t lock;
         pthread_cond_t cond;
+        bool hcall_acked;
     };
 
 typedef struct ib_uverbs_query_device_resp hyv_query_device_result;

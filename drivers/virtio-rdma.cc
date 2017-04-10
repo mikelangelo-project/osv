@@ -341,6 +341,7 @@ void rdma::handle_hcall()
         struct hcall * hcall_p = (struct hcall *) vq->get_buf_elem(&len);
         vq->get_buf_finalize();
 
+        _hcall_queue.hcall_acked = true;
         pthread_cond_signal(&_hcall_queue.cond);
         pthread_mutex_unlock(&_hcall_queue.lock);
 
@@ -386,6 +387,7 @@ int rdma::do_hcall(struct hcall_queue *hvq, const struct hcall *hcall_p,
         hvq->vq->add_out_sg(pargs[i].ptr, pargs[i].size);
     }
 
+    hvq->hcall_acked = false;
     pthread_mutex_lock(&hvq->lock);
 
     hvq->vq->add_in_sg(hret, result_size);
@@ -399,7 +401,9 @@ int rdma::do_hcall(struct hcall_queue *hvq, const struct hcall *hcall_p,
     }
 
     // wait until the worker thread got the vq ack
-    pthread_cond_wait(&hvq->cond, &hvq->lock);
+    while(!hvq->hcall_acked) {
+        pthread_cond_wait(&hvq->cond, &hvq->lock);
+    }
     pthread_mutex_unlock(&hvq->lock);
 
     return ret;
