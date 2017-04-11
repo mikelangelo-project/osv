@@ -87,7 +87,7 @@ tests := tst-pthread.so misc-ramdisk.so tst-vblk.so tst-bsd-evh.so \
 	tst-ifaddrs.so tst-pthread-affinity-inherit.so tst-sem-timed-wait.so \
 	tst-ttyname.so tst-pthread-barrier.so tst-feexcept.so tst-math.so \
 	tst-sigaltstack.so \
-	misc-ivm-lock.so
+	misc-ivm-lock.so misc-ivshmem-get.so
 
 #	libstatic-thread-variable.so tst-static-thread-variable.so \
 
