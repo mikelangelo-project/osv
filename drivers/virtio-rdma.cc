@@ -387,8 +387,8 @@ int rdma::do_hcall(struct hcall_queue *hvq, const struct hcall *hcall_p,
         hvq->vq->add_out_sg(pargs[i].ptr, pargs[i].size);
     }
 
-    hvq->hcall_acked = false;
     pthread_mutex_lock(&hvq->lock);
+    hvq->hcall_acked = false;
 
     hvq->vq->add_in_sg(hret, result_size);
 
