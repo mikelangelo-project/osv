@@ -26,8 +26,8 @@ rdma::rdma(pci::device& pci_dev)
 {
     add_dev_status(VIRTIO_CONFIG_S_DRIVER_OK);
 
-    sched::thread* event_poll_task = &_event_queue.event_poll_task;
-    sched::thread* hcall_poll_task = &_hcall_queue.hcall_poll_task;
+    sched::thread* event_poll_task = _event_queue.event_poll_task.get();
+    sched::thread* hcall_poll_task = _hcall_queue.hcall_poll_task.get();
 
     event_poll_task->set_priority(sched::thread::priority_infinity);
     hcall_poll_task->set_priority(sched::thread::priority_infinity);

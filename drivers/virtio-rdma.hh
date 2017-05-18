@@ -103,10 +103,11 @@ public:
     struct event_queue
     {
         event_queue(vring* vqueue, std::function<void ()> poll_func)
-            : vq(vqueue), event_poll_task(poll_func, sched::thread::attr().
-                                    name("virtio-rdma-eventq")) {};
+            : vq(vqueue), event_poll_task(sched::thread::make(poll_func, sched::thread::attr().
+                                                              name("virtio-rdma-eventq"))) {};
+
         vring *vq;
-        sched::thread event_poll_task;
+        std::unique_ptr<sched::thread> event_poll_task;
         pthread_mutex_t lock;
     };
 
@@ -114,11 +115,11 @@ public:
     struct hcall_queue
     {
         hcall_queue(vring* vqueue, std::function<void ()> poll_func)
-            : vq(vqueue), hcall_poll_task(poll_func, sched::thread::attr().
-                                    name("virtio-rdma-hcallq")) {};
+            : vq(vqueue), hcall_poll_task(sched::thread::make(poll_func, sched::thread::attr().
+                                                              name("virtio-rdma-hcallq"))) {};
         vring *vq;
         void *priv;
-        sched::thread hcall_poll_task;
+        std::unique_ptr<sched::thread> hcall_poll_task;
         pthread_mutex_t lock;
         pthread_cond_t cond;
         bool hcall_acked;

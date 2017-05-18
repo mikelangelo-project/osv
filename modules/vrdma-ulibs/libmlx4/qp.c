@@ -387,8 +387,6 @@ int mlx4_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
 		ctrl->owner_opcode = htonl(mlx4_ib_opcode[wr->opcode]) |
 			(ind & qp->sq.wqe_cnt ? htonl(1 << 31) : 0);
 
-		printf("ctrl->owner_opcode: %d\n", ctrl->owner_opcode);
-
 		/*
 		 * We can improve latency by not stamping the last
 		 * send queue WQE until after ringing the doorbell, so
@@ -442,7 +440,6 @@ out:
 
 	pthread_spin_unlock(&qp->sq.lock);
 
-	printf("ret qp->sq.head - qp->sq.tail: %d\n", qp->sq.head - qp->sq.tail);
 	return ret;
 }
 
