@@ -234,6 +234,8 @@ out:
 	if (len > 0 && buf[len - 1] == '\n')
 		buf[--len] = '\0';
 
+	fclose(conf);
+
 	return len;
 }
 
