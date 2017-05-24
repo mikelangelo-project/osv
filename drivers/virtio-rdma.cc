@@ -416,9 +416,8 @@ int rdma::do_hcall_sync(struct hcall_queue *hvq,
 {
     int ret;
     struct hcall_sync hcall_sync;
-//  = {
-    // 	{ false }, COMPLETION_INITIALIZER(hcall_sync.completion)
-    // } ;
+
+    hcall_sync.base.async = false;
 
     ret = do_hcall(hvq, &hcall_sync.base, hdr, copy_size, pargs, npargs,
                hret, result_size);
