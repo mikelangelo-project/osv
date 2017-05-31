@@ -21,6 +21,7 @@ $(CPP_O): $(CPP_SRC)
 $(MAIN): $(MAIN_SRCS) $(CPP_O)
 	$(CC) -DOSV_CLI $(CFLAGS) -std=gnu99 $(INCLUDES) -fPIC -shared -o $@ $(MAIN_SRCS) $(CPP_O) -ldl -pthread
 	ln -s -f ./libibverbs.so.1.0.0 ./libibverbs.so
+	ln -s -f ./libibverbs.so.1.0.0 ./libibverbs.so.1
 
 $(DEVINFO): $(DEVINFO_SRCS)
 	$(CC) -DOSV_CLI $(CFLAGS) -std=gnu99 $(INCLUDES) -fPIC -shared -o $@ $(DEVINFO_SRCS) $(LFLAGS) -pthread -libverbs -ldl
