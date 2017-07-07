@@ -6,7 +6,7 @@ INCLUDES=-I./include -I./ -I../libibverbs/include
 SRCS=cma.c
 MAIN=librdmacm.so.1.0.0
 
-RSPRELOAD_SRC=rsocket.c
+RSPRELOAD_SRC=rsocket.c indexer.c
 RSPRELOAD_SO=librspreload.so.1.0.0
 
 
@@ -17,7 +17,7 @@ $(MAIN): $(SRCS)
 	ln -s -f ./librdmacm.so.1.0.0 ./librdmacm.so
 
 $(RSPRELOAD_SO): $(RSPRELOAD_SRCS)
-	$(CC) -DOSV_CLI $(CFLAGS) $(INCLUDES) -fPIC -shared -o $@ $(RSPRELOAD_SRCS) $(LFLAGS) -pthread -libverbs -ldl
+	$(CC) -DOSV_CLI $(CFLAGS) $(INCLUDES) -fPIC -shared -o $@ $(RSPRELOAD_SRC) $(LFLAGS) -pthread -libverbs -ldl
 	ln -s -f ./librspreload.so.1.0.0 ./librspreload.so
 	ln -s -f ./librspreload.so.1.0.0 ./librspreload.so.1
 

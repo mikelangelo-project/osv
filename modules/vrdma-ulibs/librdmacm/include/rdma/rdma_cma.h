@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2005 Voltaire Inc.  All rights reserved.
- * Copyright (c) 2005-2007 Intel Corporation.  All rights reserved.
+ * Copyright (c) 2005-2010 Intel Corporation.  All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -67,10 +67,16 @@ enum rdma_cm_event_type {
 };
 
 enum rdma_port_space {
-	RDMA_PS_IPOIB= 0x0002,
-	RDMA_PS_TCP  = 0x0106,
-	RDMA_PS_UDP  = 0x0111,
+	RDMA_PS_IPOIB = 0x0002,
+	RDMA_PS_TCP   = 0x0106,
+	RDMA_PS_UDP   = 0x0111,
+	RDMA_PS_IB    = 0x013F,
 };
+
+#define RDMA_IB_IP_PS_MASK   0xFFFFFFFFFFFF0000ULL
+#define RDMA_IB_IP_PORT_MASK 0x000000000000FFFFULL
+#define RDMA_IB_IP_PS_TCP    0x0000000001060000ULL
+#define RDMA_IB_IP_PS_UDP    0x0000000001110000ULL
 
 /*
  * Global qkey value for UDP QPs and multicast groups created via the 
@@ -78,21 +84,27 @@ enum rdma_port_space {
  */
 #define RDMA_UDP_QKEY 0x01234567
 
-struct ib_addr {
+struct rdma_ib_addr {
 	union ibv_gid	sgid;
 	union ibv_gid	dgid;
 	uint16_t	pkey;
 };
 
 struct rdma_addr {
-	struct sockaddr		src_addr;
-	uint8_t			src_pad[sizeof(struct sockaddr_storage) -
-					sizeof(struct sockaddr)];
-	struct sockaddr		dst_addr;
-	uint8_t			dst_pad[sizeof(struct sockaddr_storage) -
-					sizeof(struct sockaddr)];
 	union {
-		struct ib_addr	ibaddr;
+		struct sockaddr		src_addr;
+		struct sockaddr_in	src_sin;
+		struct sockaddr_in6	src_sin6;
+		struct sockaddr_storage src_storage;
+	};
+	union {
+		struct sockaddr		dst_addr;
+		struct sockaddr_in	dst_sin;
+		struct sockaddr_in6	dst_sin6;
+		struct sockaddr_storage dst_storage;
+	};
+	union {
+		struct rdma_ib_addr	ibaddr;
 	} addr;
 };
 
@@ -114,6 +126,19 @@ struct rdma_cm_id {
 	struct rdma_route	 route;
 	enum rdma_port_space	 ps;
 	uint8_t			 port_num;
+	struct rdma_cm_event	*event;
+	struct ibv_comp_channel *send_cq_channel;
+	struct ibv_cq		*send_cq;
+	struct ibv_comp_channel *recv_cq_channel;
+	struct ibv_cq		*recv_cq;
+	struct ibv_srq		*srq;
+	struct ibv_pd		*pd;
+	enum ibv_qp_type	qp_type;
+};
+
+enum {
+	RDMA_MAX_RESP_RES = 0xFF,
+	RDMA_MAX_INIT_DEPTH = 0xFF
 };
 
 struct rdma_conn_param {
@@ -146,6 +171,28 @@ struct rdma_cm_event {
 		struct rdma_conn_param conn;
 		struct rdma_ud_param   ud;
 	} param;
+};
+
+#define RAI_PASSIVE		0x00000001
+#define RAI_NUMERICHOST		0x00000002
+#define RAI_NOROUTE		0x00000004
+
+struct rdma_addrinfo {
+	int			ai_flags;
+	int			ai_family;
+	int			ai_qp_type;
+	int			ai_port_space;
+	socklen_t		ai_src_len;
+	socklen_t		ai_dst_len;
+	struct sockaddr		*ai_src_addr;
+	struct sockaddr		*ai_dst_addr;
+	char			*ai_src_canonname;
+	char			*ai_dst_canonname;
+	size_t			ai_route_len;
+	void			*ai_route;
+	size_t			ai_connect_len;
+	void			*ai_connect;
+	struct rdma_addrinfo	*ai_next;
 };
 
 /**
@@ -200,6 +247,43 @@ void rdma_destroy_event_channel(struct rdma_event_channel *channel);
 int rdma_create_id(struct rdma_event_channel *channel,
 		   struct rdma_cm_id **id, void *context,
 		   enum rdma_port_space ps);
+
+/**
+ * rdma_create_ep - Allocate a communication identifier and qp.
+ * @id: A reference where the allocated communication identifier will be
+ *   returned.
+ * @res: Result from rdma_getaddrinfo, which specifies the source and
+ *   destination addresses, plus optional routing and connection information.
+ * @pd: Optional protection domain.  This parameter is ignored if qp_init_attr
+ *   is NULL.
+ * @qp_init_attr: Optional attributes for a QP created on the rdma_cm_id.
+ * Description:
+ *   Create an identifier and option QP used for communication.
+ * Notes:
+ *   If qp_init_attr is provided, then a queue pair will be allocated and
+ *   associated with the rdma_cm_id.  If a pd is provided, the QP will be
+ *   created on that PD.  Otherwise, the QP will be allocated on a default
+ *   PD.
+ *   The rdma_cm_id will be set to use synchronous operations (connect,
+ *   listen, and get_request).  To convert to asynchronous operation, the
+ *   rdma_cm_id should be migrated to a user allocated event channel.
+ * See also:
+ *   rdma_create_id, rdma_create_qp, rdma_migrate_id, rdma_connect,
+ *   rdma_listen
+ */
+int rdma_create_ep(struct rdma_cm_id **id, struct rdma_addrinfo *res,
+		   struct ibv_pd *pd, struct ibv_qp_init_attr *qp_init_attr);
+
+/**
+ * rdma_destroy_ep - Deallocates a communication identifier and qp.
+ * @id: The communication identifer to destroy.
+ * Description:
+ *   Destroys the specified rdma_cm_id and any associated QP created
+ *   on that id.
+ * See also:
+ *   rdma_create_ep
+ */
+void rdma_destroy_ep(struct rdma_cm_id *id);
 
 /**
  * rdma_destroy_id - Release a communication identifier.
@@ -278,7 +362,7 @@ int rdma_resolve_route(struct rdma_cm_id *id, int timeout_ms);
 /**
  * rdma_create_qp - Allocate a QP.
  * @id: RDMA identifier.
- * @pd: protection domain for the QP.
+ * @pd: Optional protection domain for the QP.
  * @qp_init_attr: initial QP attributes.
  * Description:
  *  Allocate a QP associated with the specified rdma_cm_id and transition it
@@ -290,6 +374,8 @@ int rdma_resolve_route(struct rdma_cm_id *id, int timeout_ms);
  *   librdmacm through their states.  After being allocated, the QP will be
  *   ready to handle posting of receives.  If the QP is unconnected, it will
  *   be ready to post sends.
+ *   If pd is NULL, then the QP will be allocated using a default protection
+ *   domain associated with the underlying RDMA device.
  * See also:
  *   rdma_bind_addr, rdma_resolve_addr, rdma_destroy_qp, ibv_create_qp,
  *   ibv_modify_qp
@@ -313,7 +399,7 @@ void rdma_destroy_qp(struct rdma_cm_id *id);
 /**
  * rdma_connect - Initiate an active connection request.
  * @id: RDMA identifier.
- * @conn_param: connection parameters.
+ * @conn_param: optional connection parameters.
  * Description:
  *   For a connected rdma_cm_id, this call initiates a connection request
  *   to a remote destination.  For an unconnected rdma_cm_id, it initiates
@@ -321,6 +407,8 @@ void rdma_destroy_qp(struct rdma_cm_id *id);
  * Notes:
  *   Users must have resolved a route to the destination address
  *   by having called rdma_resolve_route before calling this routine.
+ *   A user may override the default connection parameters and exchange
+ *   private data as part of the connection by using the conn_param parameter.
  * See also:
  *   rdma_resolve_route, rdma_disconnect, rdma_listen, rdma_get_cm_event
  */
@@ -347,9 +435,14 @@ int rdma_connect(struct rdma_cm_id *id, struct rdma_conn_param *conn_param);
 int rdma_listen(struct rdma_cm_id *id, int backlog);
 
 /**
+ * rdma_get_request
+ */
+int rdma_get_request(struct rdma_cm_id *listen, struct rdma_cm_id **id);
+
+/**
  * rdma_accept - Called to accept a connection request.
  * @id: Connection identifier associated with the request.
- * @conn_param: Information needed to establish the connection.
+ * @conn_param: Optional information needed to establish the connection.
  * Description:
  *   Called from the listening side to accept a connection or datagram
  *   service lookup request.
@@ -360,6 +453,8 @@ int rdma_listen(struct rdma_cm_id *id, int backlog);
  *   events give the user a newly created rdma_cm_id, similar to a new
  *   socket, but the rdma_cm_id is bound to a specific RDMA device.
  *   rdma_accept is called on the new rdma_cm_id.
+ *   A user may override the default connection parameters and exchange
+ *   private data as part of the connection by using the conn_param parameter.
  * See also:
  *   rdma_listen, rdma_reject, rdma_get_cm_event
  */
@@ -489,15 +584,15 @@ int rdma_ack_cm_event(struct rdma_cm_event *event);
 static inline uint16_t rdma_get_src_port(struct rdma_cm_id *id)
 {
 	return	id->route.addr.src_addr.sa_family == PF_INET6 ?
-		((struct sockaddr_in6 *) &id->route.addr.src_addr)->sin6_port :
-		((struct sockaddr_in *) &id->route.addr.src_addr)->sin_port;
+		id->route.addr.src_sin6.sin6_port :
+		id->route.addr.src_sin.sin_port;
 }
 
 static inline uint16_t rdma_get_dst_port(struct rdma_cm_id *id)
 {
 	return	id->route.addr.dst_addr.sa_family == PF_INET6 ?
-		((struct sockaddr_in6 *) &id->route.addr.dst_addr)->sin6_port :
-		((struct sockaddr_in *) &id->route.addr.dst_addr)->sin_port;
+		id->route.addr.dst_sin6.sin6_port :
+		id->route.addr.dst_sin.sin_port;
 }
 
 static inline struct sockaddr *rdma_get_local_addr(struct rdma_cm_id *id)
@@ -547,12 +642,16 @@ const char *rdma_event_str(enum rdma_cm_event_type event);
 
 /* Option levels */
 enum {
-	RDMA_OPTION_ID		= 0
+	RDMA_OPTION_ID		= 0,
+	RDMA_OPTION_IB		= 1
 };
 
 /* Option details */
 enum {
-	RDMA_OPTION_ID_TOS	= 0	/* uint8_t: RFC 2474 */
+	RDMA_OPTION_ID_TOS	 = 0,	/* uint8_t: RFC 2474 */
+	RDMA_OPTION_ID_REUSEADDR = 1,   /* int: ~SO_REUSEADDR */
+	RDMA_OPTION_ID_AFONLY	 = 2,   /* int: ~IPV6_V6ONLY */
+	RDMA_OPTION_IB_PATH	 = 1	/* struct ibv_path_data[] */
 };
 
 /**
@@ -572,6 +671,15 @@ int rdma_set_option(struct rdma_cm_id *id, int level, int optname,
  * @channel: New event channel for rdma_cm_id events.
  */
 int rdma_migrate_id(struct rdma_cm_id *id, struct rdma_event_channel *channel);
+
+/**
+ * rdma_getaddrinfo - RDMA address and route resolution service.
+ */
+int rdma_getaddrinfo(char *node, char *service,
+		     struct rdma_addrinfo *hints,
+		     struct rdma_addrinfo **res);
+
+void rdma_freeaddrinfo(struct rdma_addrinfo *res);
 
 #ifdef __cplusplus
 }
