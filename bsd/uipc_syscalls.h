@@ -70,6 +70,7 @@ int linux_socketpair(int domain, int type, int protocol, int* rsv);
 int linux_getsockname(int s, struct bsd_sockaddr *addr, socklen_t *addrlen);
 int linux_getpeername(int s, struct bsd_sockaddr *addr, socklen_t *addrlen);
 
+extern bool using_rsocket;
 __END_DECLS
 
 #endif /* !UIPC_SYSCALLS_H */
