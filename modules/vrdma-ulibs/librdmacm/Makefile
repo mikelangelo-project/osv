@@ -16,7 +16,7 @@ $(MAIN): $(SRCS)
 	$(CC) -DOSV_CLI $(CFLAGS) $(INCLUDES) -fPIC -shared -o $@ $(SRCS) $(LFLAGS) $(LIBS)
 	ln -s -f ./librdmacm.so.1.0.0 ./librdmacm.so
 
-$(RSPRELOAD_SO): $(RSPRELOAD_SRCS)
+$(RSPRELOAD_SO): $(RSPRELOAD_SRC)
 	$(CC) -DOSV_CLI $(CFLAGS) $(INCLUDES) -fPIC -shared -o $@ $(RSPRELOAD_SRC) $(LFLAGS) -pthread -libverbs -ldl
 	ln -s -f ./librspreload.so.1.0.0 ./librspreload.so
 	ln -s -f ./librspreload.so.1.0.0 ./librspreload.so.1
