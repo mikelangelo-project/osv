@@ -93,16 +93,16 @@ struct sg_table {
 #define	SG_END		0x01
 #define	SG_CHAIN	0x02
 
-static inline void
-sg_set_page(struct scatterlist *sg, struct page *page, unsigned int len,
-    unsigned int offset)
-{
-	sg_page(sg) = page;
-	sg_dma_len(sg) = len;
-	sg->offset = offset;
-	if (offset > PAGE_SIZE)
-	    panic("sg_set_page: Invalid offset %d\n", offset);
-}
+/* static inline void */
+/* sg_set_page(struct scatterlist *sg, struct page *page, unsigned int len, */
+/*     unsigned int offset) */
+/* { */
+/* 	sg_page(sg) = page; */
+/* 	sg_dma_len(sg) = len; */
+/* 	sg->offset = offset; */
+/* 	if (offset > PAGE_SIZE) */
+/* 	    panic("sg_set_page: Invalid offset %d\n", offset); */
+/* } */
 
 /* static inline void */
 /* sg_set_buf(struct scatterlist *sg, const void *buf, unsigned int buflen) */
