@@ -36,24 +36,32 @@
 #  include <config.h>
 #endif /* HAVE_CONFIG_H */
 
-#include <stdlib.h>
+// #include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <errno.h>
+#include <alloca.h>
 #include <string.h>
 #include <glob.h>
-#include <stdio.h>
 #include <fcntl.h>
-#include <errno.h>
 #include <stdint.h>
 #include <poll.h>
-#include <unistd.h>
 #include <pthread.h>
 //#include <infiniband/endian.h>
 //#include <infiniband/byteswap.h>
+#include <byteswap.h>
 #include <stddef.h>
-
 #include <infiniband/driver.h>
 #include <infiniband/marshall.h>
 #include <rdma/rdma_cma.h>
 #include <rdma/rdma_cma_abi.h>
+#include <infiniband/verbs.h>
+#include <infiniband/kern-abi.h>
+#include <linux/err.h>
+
+#include <drivers/virtio-rdma.hh>
+
+BEGIN_C_DECLS
 
 #ifdef INCLUDE_VALGRIND
 #   include <valgrind/memcheck.h>
@@ -67,6 +75,7 @@
 #endif
 
 #define PFX "librdmacm: "
+
 
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 static inline uint64_t htonll(uint64_t x) { return bswap_64(x); }
@@ -82,7 +91,7 @@ static inline int ERR(int err)
 	return -1;
 }
 
-#define CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, type, size) \
+#define CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, resp_type, cmd_id, cmd_type,  size) \
 do {                                        \
 	struct ucma_abi_cmd_hdr *hdr;         \
                                             \
@@ -90,19 +99,19 @@ do {                                        \
 	msg = alloca(size);                 \
 	if (!msg)                           \
 		return ERR(ENOMEM);         \
-	hdr = msg;                          \
-	cmd = msg + sizeof(*hdr);           \
-	hdr->cmd = type;                    \
+	hdr = (ucma_abi_cmd_hdr *) msg;		\
+	cmd = (cmd_type *) ((char *)msg + sizeof(*hdr));	\
+	hdr->cmd = cmd_id;                    \
 	hdr->in  = sizeof(*cmd);            \
 	hdr->out = sizeof(*resp);           \
 	memset(cmd, 0, sizeof(*cmd));       \
-	resp = alloca(sizeof(*resp));       \
+	resp = (resp_type *) alloca(sizeof(*resp));	\
 	if (!resp)                          \
 		return ERR(ENOMEM);         \
 	cmd->response = (uintptr_t)resp;\
 } while (0)
 
-#define CMA_CREATE_MSG_CMD(msg, cmd, type, size) \
+#define CMA_CREATE_MSG_CMD(msg, cmd, cmd_id, cmd_type, size) \
 do {                                        \
 	struct ucma_abi_cmd_hdr *hdr;       \
                                             \
@@ -110,9 +119,9 @@ do {                                        \
 	msg = alloca(size);                 \
 	if (!msg)                           \
 		return ERR(ENOMEM);         \
-	hdr = msg;                          \
-	cmd = msg + sizeof(*hdr);           \
-	hdr->cmd = type;                    \
+	hdr = (ucma_abi_cmd_hdr *) msg;						\
+	cmd = (cmd_type *) ((char *)msg + sizeof(*hdr));			\
+	hdr->cmd = cmd_id;                    \
 	hdr->in  = sizeof(*cmd);            \
 	hdr->out = 0;                       \
 	memset(cmd, 0, sizeof(*cmd));       \
@@ -161,8 +170,8 @@ static int cma_dev_cnt;
 static pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
 static int abi_ver = RDMA_USER_CM_MAX_ABI_VERSION;
 
-#define container_of(ptr, type, field) \
-	((type *) ((void *)ptr - offsetof(type, field)))
+using namespace virtio;
+rdma *rdma_drv = rdma::instance();
 
 static void ucma_cleanup(void)
 {
@@ -230,7 +239,7 @@ static int ucma_init(void)
 		goto err1;
 	}
 
-	cma_dev_array = malloc(sizeof *cma_dev * dev_cnt);
+	cma_dev_array = (cma_device *) malloc(sizeof *cma_dev * dev_cnt);
 	if (!cma_dev_array) {
 		ret = ERR(ENOMEM);
 		goto err2;
@@ -283,7 +292,7 @@ struct ibv_context **rdma_get_devices(int *num_devices)
 	if (!cma_dev_cnt && ucma_init())
 		goto out;
 
-	devs = malloc(sizeof *devs * (cma_dev_cnt + 1));
+	devs = (ibv_context **) malloc(sizeof *devs * (cma_dev_cnt + 1));
 	if (!devs)
 		goto out;
 
@@ -313,7 +322,7 @@ struct rdma_event_channel *rdma_create_event_channel(void)
 	if (!cma_dev_cnt && ucma_init())
 		return NULL;
 
-	channel = malloc(sizeof *channel);
+	channel = (rdma_event_channel *) malloc(sizeof *channel);
 	if (!channel)
 		return NULL;
 
@@ -366,7 +375,7 @@ static struct cma_id_private *ucma_alloc_id(struct rdma_event_channel *channel,
 {
 	struct cma_id_private *id_priv;
 
-	id_priv = malloc(sizeof *id_priv);
+	id_priv = (cma_id_private *) malloc(sizeof *id_priv);
 	if (!id_priv)
 		return NULL;
 
@@ -402,7 +411,7 @@ int rdma_create_id(struct rdma_event_channel *channel,
 	if (!id_priv)
 		return ERR(ENOMEM);
 
-	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, UCMA_CMD_CREATE_ID, size);
+	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, ucma_abi_create_id_resp, UCMA_CMD_CREATE_ID, ucma_abi_create_id, size);
 	cmd->uid = (uintptr_t) id_priv;
 	cmd->ps = ps;
 
@@ -427,7 +436,7 @@ static int ucma_destroy_kern_id(int fd, uint32_t handle)
 	void *msg;
 	int ret, size;
 	
-	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, UCMA_CMD_DESTROY_ID, size);
+	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, ucma_abi_destroy_id_resp, UCMA_CMD_DESTROY_ID, ucma_abi_destroy_id, size);
 	cmd->id = handle;
 
 	ret = write(fd, msg, size);
@@ -481,7 +490,7 @@ static int ucma_query_route(struct rdma_cm_id *id)
 	void *msg;
 	int ret, size, i;
 	
-	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, UCMA_CMD_QUERY_ROUTE, size);
+	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, ucma_abi_query_route_resp, UCMA_CMD_QUERY_ROUTE, ucma_abi_query_route, size);
 	id_priv = container_of(id, struct cma_id_private, id);
 	cmd->id = id_priv->handle;
 
@@ -492,7 +501,7 @@ static int ucma_query_route(struct rdma_cm_id *id)
 	VALGRIND_MAKE_MEM_DEFINED(resp, sizeof *resp);
 
 	if (resp->num_paths) {
-		id->route.path_rec = malloc(sizeof *id->route.path_rec *
+		id->route.path_rec = (ibv_sa_path_rec *) malloc(sizeof *id->route.path_rec *
 					    resp->num_paths);
 		if (!id->route.path_rec)
 			return ERR(ENOMEM);
@@ -534,7 +543,7 @@ int rdma_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr)
 	if (!addrlen)
 		return ERR(EINVAL);
 
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_BIND_ADDR, size);
+	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_BIND_ADDR, ucma_abi_bind_addr, size);
 	id_priv = container_of(id, struct cma_id_private, id);
 	cmd->id = id_priv->handle;
 	memcpy(&cmd->addr, addr, addrlen);
@@ -558,7 +567,7 @@ int rdma_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
 	if (!daddrlen)
 		return ERR(EINVAL);
 
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_RESOLVE_ADDR, size);
+	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_RESOLVE_ADDR, ucma_abi_resolve_addr, size);
 	id_priv = container_of(id, struct cma_id_private, id);
 	cmd->id = id_priv->handle;
 	if (src_addr)
@@ -581,7 +590,7 @@ int rdma_resolve_route(struct rdma_cm_id *id, int timeout_ms)
 	void *msg;
 	int ret, size;
 	
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_RESOLVE_ROUTE, size);
+	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_RESOLVE_ROUTE, ucma_abi_resolve_route, size);
 	id_priv = container_of(id, struct cma_id_private, id);
 	cmd->id = id_priv->handle;
 	cmd->timeout_ms = timeout_ms;
@@ -607,7 +616,7 @@ static int rdma_init_qp_attr(struct rdma_cm_id *id, struct ibv_qp_attr *qp_attr,
 	void *msg;
 	int ret, size;
 	
-	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, UCMA_CMD_INIT_QP_ATTR, size);
+	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, ibv_kern_qp_attr, UCMA_CMD_INIT_QP_ATTR, ucma_abi_init_qp_attr, size);
 	id_priv = container_of(id, struct cma_id_private, id);
 	cmd->id = id_priv->handle;
 	cmd->qp_state = qp_attr->qp_state;
@@ -876,7 +885,7 @@ int rdma_connect(struct rdma_cm_id *id, struct rdma_conn_param *conn_param)
 	if (ret)
 		return ret;
 
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_CONNECT, size);
+	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_CONNECT, ucma_abi_connect, size);
 	cmd->id = id_priv->handle;
 	if (id->qp)
 		ucma_copy_conn_param_to_kern(&cmd->conn_param, conn_param,
@@ -901,7 +910,7 @@ int rdma_listen(struct rdma_cm_id *id, int backlog)
 	void *msg;
 	int ret, size;
 	
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_LISTEN, size);
+	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_LISTEN, ucma_abi_listen, size);
 	id_priv = container_of(id, struct cma_id_private, id);
 	cmd->id = id_priv->handle;
 	cmd->backlog = backlog;
@@ -931,7 +940,7 @@ int rdma_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_param)
 			return ret;
 	}
 
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_ACCEPT, size);
+	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_ACCEPT, ucma_abi_accept, size);
 	cmd->id = id_priv->handle;
 	cmd->uid = (uintptr_t) id_priv;
 	if (id->qp)
@@ -960,7 +969,7 @@ int rdma_reject(struct rdma_cm_id *id, const void *private_data,
 	void *msg;
 	int ret, size;
 	
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_REJECT, size);
+	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_REJECT, ucma_abi_reject, size);
 
 	id_priv = container_of(id, struct cma_id_private, id);
 	cmd->id = id_priv->handle;
@@ -984,7 +993,7 @@ int rdma_notify(struct rdma_cm_id *id, enum ibv_event_type event)
 	void *msg;
 	int ret, size;
 	
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_NOTIFY, size);
+	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_NOTIFY, ucma_abi_notify, size);
 
 	id_priv = container_of(id, struct cma_id_private, id);
 	cmd->id = id_priv->handle;
@@ -1016,7 +1025,7 @@ int rdma_disconnect(struct rdma_cm_id *id)
 	if (ret)
 		return ret;
 
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_DISCONNECT, size);
+	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_DISCONNECT, ucma_abi_disconnect, size);
 	id_priv = container_of(id, struct cma_id_private, id);
 	cmd->id = id_priv->handle;
 
@@ -1042,7 +1051,7 @@ int rdma_join_multicast(struct rdma_cm_id *id, struct sockaddr *addr,
 	if (!addrlen)
 		return ERR(EINVAL);
 
-	mc = malloc(sizeof *mc);
+	mc = (cma_multicast *) malloc(sizeof *mc);
 	if (!mc)
 		return ERR(ENOMEM);
 
@@ -1060,7 +1069,7 @@ int rdma_join_multicast(struct rdma_cm_id *id, struct sockaddr *addr,
 	id_priv->mc_list = mc;
 	pthread_mutex_unlock(&id_priv->mut);
 
-	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, UCMA_CMD_JOIN_MCAST, size);
+	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, ucma_abi_create_id_resp, UCMA_CMD_JOIN_MCAST, ucma_abi_join_mcast, size);
 	cmd->id = id_priv->handle;
 	memcpy(&cmd->addr, addr, addrlen);
 	cmd->uid = (uintptr_t) mc;
@@ -1115,7 +1124,7 @@ int rdma_leave_multicast(struct rdma_cm_id *id, struct sockaddr *addr)
 	if (id->qp)
 		ibv_detach_mcast(id->qp, &mc->mgid, mc->mlid);
 	
-	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, UCMA_CMD_LEAVE_MCAST, size);
+	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, ucma_abi_destroy_id_resp, UCMA_CMD_LEAVE_MCAST, ucma_abi_destroy_id, size);
 	cmd->id = mc->handle;
 
 	ret = write(id->channel->fd, msg, size);
@@ -1216,7 +1225,7 @@ static int ucma_process_conn_resp(struct cma_id_private *id_priv)
 	if (ret)
 		goto err;
 
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_ACCEPT, size);
+	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_ACCEPT, ucma_abi_accept, size);
 	cmd->id = id_priv->handle;
 
 	ret = write(id_priv->id.channel->fd, msg, size);
@@ -1308,13 +1317,13 @@ int rdma_get_cm_event(struct rdma_event_channel *channel,
 	if (!event)
 		return ERR(EINVAL);
 
-	evt = malloc(sizeof *evt);
+	evt = (cma_event *) malloc(sizeof *evt);
 	if (!evt)
 		return ERR(ENOMEM);
 
 retry:
 	memset(evt, 0, sizeof *evt);
-	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, UCMA_CMD_GET_EVENT, size);
+	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, ucma_abi_event_resp, UCMA_CMD_GET_EVENT, ucma_abi_get_event, size);
 	ret = write(channel->fd, msg, size);
 	if (ret != size) {
 		free(evt);
@@ -1323,8 +1332,8 @@ retry:
 	
 	VALGRIND_MAKE_MEM_DEFINED(resp, sizeof *resp);
 
-	evt->event.event = resp->event;
-	evt->id_priv = (void *) (uintptr_t) resp->uid;
+	evt->event.event = (rdma_cm_event_type) resp->event;
+	evt->id_priv = (cma_id_private *) (uintptr_t) resp->uid;
 	evt->event.id = &evt->id_priv->id;
 	evt->event.status = resp->status;
 
@@ -1340,7 +1349,7 @@ retry:
 			evt->event.event = RDMA_CM_EVENT_ROUTE_ERROR;
 		break;
 	case RDMA_CM_EVENT_CONNECT_REQUEST:
-		evt->id_priv = (void *) (uintptr_t) resp->uid;
+		evt->id_priv = (cma_id_private *) (uintptr_t) resp->uid;
 		if (ucma_is_ud_ps(evt->id_priv->id.ps))
 			ucma_copy_ud_event(evt, &resp->param.ud);
 		else
@@ -1389,7 +1398,7 @@ retry:
 		ucma_copy_conn_event(evt, &resp->param.conn);
 		break;
 	case RDMA_CM_EVENT_MULTICAST_JOIN:
-		evt->mc = (void *) (uintptr_t) resp->uid;
+		evt->mc = (cma_multicast *) (uintptr_t) resp->uid;
 		evt->id_priv = evt->mc->id_priv;
 		evt->event.id = &evt->id_priv->id;
 		ucma_copy_ud_event(evt, &resp->param.ud);
@@ -1399,13 +1408,13 @@ retry:
 			evt->event.event = RDMA_CM_EVENT_MULTICAST_ERROR;
 		break;
 	case RDMA_CM_EVENT_MULTICAST_ERROR:
-		evt->mc = (void *) (uintptr_t) resp->uid;
+		evt->mc = (cma_multicast *) (uintptr_t) resp->uid;
 		evt->id_priv = evt->mc->id_priv;
 		evt->event.id = &evt->id_priv->id;
 		evt->event.param.ud.private_data = evt->mc->context;
 		break;
 	default:
-		evt->id_priv = (void *) (uintptr_t) resp->uid;
+		evt->id_priv = (cma_id_private *) (uintptr_t) resp->uid;
 		evt->event.id = &evt->id_priv->id;
 		evt->event.status = resp->status;
 		if (ucma_is_ud_ps(evt->id_priv->id.ps))
@@ -1467,7 +1476,7 @@ int rdma_set_option(struct rdma_cm_id *id, int level, int optname,
 	void *msg;
 	int ret, size;
 	
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_SET_OPTION, size);
+	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_SET_OPTION, ucma_abi_set_option, size);
 	id_priv = container_of(id, struct cma_id_private, id);
 	cmd->id = id_priv->handle;
 	cmd->optval = (uintptr_t) optval;
@@ -1491,7 +1500,7 @@ int rdma_migrate_id(struct rdma_cm_id *id, struct rdma_event_channel *channel)
 	int ret, size;
 
 	id_priv = container_of(id, struct cma_id_private, id);
-	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, UCMA_CMD_MIGRATE_ID, size);
+	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, ucma_abi_migrate_resp, UCMA_CMD_MIGRATE_ID, ucma_abi_migrate_id, size);
 	cmd->id = id_priv->handle;
 	cmd->fd = id->channel->fd;
 
@@ -1516,3 +1525,5 @@ int rdma_migrate_id(struct rdma_cm_id *id, struct rdma_event_channel *channel)
 
 	return 0;
 }
+
+END_C_DECLS
