@@ -326,15 +326,7 @@ struct rdma_event_channel *rdma_create_event_channel(void)
 	if (!channel)
 		return NULL;
 
-	channel->fd = open("/dev/rdma_cm", O_RDWR);
-	if (channel->fd < 0) {
-		printf("CMA: unable to open /dev/rdma_cm\n");
-		goto err;
-	}
 	return channel;
-err:
-	free(channel);
-	return NULL;
 }
 
 void rdma_destroy_event_channel(struct rdma_event_channel *channel)
@@ -397,11 +389,8 @@ int rdma_create_id(struct rdma_event_channel *channel,
 		   struct rdma_cm_id **id, void *context,
 		   enum rdma_port_space ps)
 {
-	struct ucma_abi_create_id_resp *resp;
-	struct ucma_abi_create_id *cmd;
 	struct cma_id_private *id_priv;
-	void *msg;
-	int ret, size;
+	int ret;
 
 	ret = cma_dev_cnt ? 0 : ucma_init();
 	if (ret)
@@ -411,18 +400,13 @@ int rdma_create_id(struct rdma_event_channel *channel,
 	if (!id_priv)
 		return ERR(ENOMEM);
 
-	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, ucma_abi_create_id_resp, UCMA_CMD_CREATE_ID, ucma_abi_create_id, size);
-	cmd->uid = (uintptr_t) id_priv;
-	cmd->ps = ps;
-
-	ret = write(channel->fd, msg, size);
-	if (ret != size)
+	ret = rdma_drv->vrdmacm_create_id(context, ps);
+	if (ret < 0)
 		goto err;
 
-	VALGRIND_MAKE_MEM_DEFINED(resp, sizeof *resp);
-
-	id_priv->handle = resp->id;
+	id_priv->handle = ret;
 	*id = &id_priv->id;
+
 	return 0;
 
 err:	ucma_free_id(id_priv);
@@ -435,7 +419,7 @@ static int ucma_destroy_kern_id(int fd, uint32_t handle)
 	struct ucma_abi_destroy_id *cmd;
 	void *msg;
 	int ret, size;
-	
+
 	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, ucma_abi_destroy_id_resp, UCMA_CMD_DESTROY_ID, ucma_abi_destroy_id, size);
 	cmd->id = handle;
 
@@ -538,7 +522,7 @@ int rdma_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr)
 	struct cma_id_private *id_priv;
 	void *msg;
 	int ret, size, addrlen;
-	
+
 	addrlen = ucma_addrlen(addr);
 	if (!addrlen)
 		return ERR(EINVAL);
@@ -548,9 +532,7 @@ int rdma_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr)
 	cmd->id = id_priv->handle;
 	memcpy(&cmd->addr, addr, addrlen);
 
-	ret = write(id->channel->fd, msg, size);
-	if (ret != size)
-		return (ret >= 0) ? ERR(ECONNREFUSED) : -1;
+	ret = rdma_drv->vrdmacm_bind_addr(id, addr);
 
 	return ucma_query_route(id);
 }
@@ -562,7 +544,7 @@ int rdma_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
 	struct cma_id_private *id_priv;
 	void *msg;
 	int ret, size, daddrlen;
-	
+
 	daddrlen = ucma_addrlen(dst_addr);
 	if (!daddrlen)
 		return ERR(EINVAL);

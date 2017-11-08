@@ -6,7 +6,7 @@ INCLUDES=-I./include -I./ -I../libibverbs/include -I../../../ -I../../../arch/co
 CPP_SRCS=cma.cc
 CPP_O=cma.o
 
-SRCS=rsocket.c indexer.c
+SRCS=rsocket.c indexer.c acm.c addrinfo.c
 MAIN=librdmacm.so.1.0.0
 
 module: $(MAIN) $(CPP_O)
@@ -14,12 +14,13 @@ module: $(MAIN) $(CPP_O)
 $(CPP_O): $(CPP_SRC)
 	$(CC) -DOSV_CLI $(CFLAGS) -fPIC -c -std=gnu++11 $(INCLUDES) $(CPP_SRCS)
 
-$(MAIN): $(SRCS) $(CPP_O)
-	$(CC) -DOSV_CLI $(CFLAGS) $(INCLUDES) -std=gnu99 -fPIC -shared -o $@ $(SRCS) $(LFLAGS) $(LIBS)
+$(MAIN): $(CPP_O) $(SRCS)
+	$(CC) -DOSV_CLI $(CFLAGS) $(INCLUDES) -std=gnu99 -fPIC -shared -o $@ $(SRCS) $(CPP_O) $(LFLAGS) $(LIBS) -libverbs -ldl -pthread
 	ln -s -f ./librdmacm.so.1.0.0 ./librdmacm.so
+	ln -s -f ./librdmacm.so.1.0.0 ./librdmacm.so.1
 
 clean:
-	rm -f $(MAIN) librdmacm.so.1 librdmacm.so
+	rm -f $(MAIN) librdmacm.so.1 librdmacm.so librspreload.so* $(CPP_O)
 install:
 	cp ./librdmacm.so.1.0.0 /usr/lib/librdmacm.so.1.0.0
 	ln -s -f /usr/lib/librdmacm.so.1.0.0 /usr/lib/librdmacm.so.1
