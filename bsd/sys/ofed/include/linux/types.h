@@ -51,6 +51,8 @@ typedef uint32_t __le32;
 typedef uint32_t __be32;
 typedef uint64_t __le64;
 typedef uint64_t __be64;
+typedef uint8_t __u8;
+typedef uint64_t __u64;
 
 typedef unsigned int    uint;
 typedef unsigned gfp_t;

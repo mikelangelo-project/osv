@@ -14,6 +14,7 @@
 #include <asm/atomic.h>
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_user_verbs.h>
+#include <rdma/rdma_cma.h>
 #include <mlx4/user.h>
 #include "drivers/virtio.hh"
 #include "drivers/device.hh"
@@ -88,6 +89,18 @@ public:
         VIRTIO_HYV_IBV_REG_USER_MR,
         VIRTIO_HYV_IBV_DEREG_MR,
         VIRTIO_HYV_IBV_POST_SEND_NULL,
+        VIRTIO_RDMACM_POST_EVENT,
+        VIRTIO_RDMACM_CREATE_ID,
+        VIRTIO_RDMACM_DESTROY_ID,
+        VIRTIO_RDMACM_RESOLVE_ADDR,
+        VIRTIO_RDMACM_RESOLVE_ROUTE,
+        VIRTIO_RDMACM_CONNECT,
+        VIRTIO_RDMACM_DISCONNECT,
+        VIRTIO_RDMACM_ACCEPT,
+        VIRTIO_RDMACM_REJECT,
+        VIRTIO_RDMACM_BIND_ADDR,
+        VIRTIO_RDMACM_LISTEN,
+        VIRTIO_RDMACM_INIT_QP_ATTR,
         VIRTIO_HYV_NHCALLS
     };
 
@@ -572,9 +585,9 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
 
     typedef struct
     {
-            uint32_t qp_handle;
-            uint32_t qpn;
-            hyv_qp_cap cap;
+        uint32_t qp_handle;
+        uint32_t qpn;
+        hyv_qp_cap cap;
     } hyv_create_qp_result;
 
     struct hyv_udata_translate* udata_translate_create(hyv_udata *udata,
@@ -611,6 +624,46 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     struct hyv_mr *hmr;
     struct hyv_cq *hcq;
     struct hyv_qp *hqp;
+
+
+    // RDMA CM
+
+    struct vrdmacm_id_priv
+    {
+        bool conn_done;
+        uint32_t host_handle;
+        struct ib_device *device;
+        struct rdma_cm_id id;
+    };
+
+    struct vrdmacm_create_id_copy_args {
+        struct hcall_header hdr;
+        __u64 guest_handle;
+        __u32 port_space;
+        __u32 qp_type;
+    };
+
+    struct vrdmacm_create_id_result {
+        struct hcall_ret_header hdr;
+        __s32 value;
+    };
+
+    struct vrdmacm_bind_addr_copy_args {
+        struct hcall_header hdr;
+        __u32 ctx_handle;
+        __u32 src_available;
+    };
+
+    struct vrdmacm_bind_addr_result {
+        struct hcall_ret_header hdr;
+        __s32 value;
+    };
+
+    int vrdmacm_create_id(void *context, enum rdma_port_space ps);
+    int vrdmacm_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr);
+    struct ib_device* rdmacm_get_ibdev(__be64 node_guid);
+    struct vrdmacm_id_priv* rdmacm_id_to_priv(struct rdma_cm_id *id);
+
 
 private:
     void handle_event();
