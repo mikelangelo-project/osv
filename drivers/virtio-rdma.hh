@@ -15,6 +15,7 @@
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_user_verbs.h>
 #include <rdma/rdma_cma.h>
+#include <rdma/rdma_cma_abi.h>
 #include <mlx4/user.h>
 #include "drivers/virtio.hh"
 #include "drivers/device.hh"
@@ -94,6 +95,7 @@ public:
         VIRTIO_RDMACM_DESTROY_ID,
         VIRTIO_RDMACM_RESOLVE_ADDR,
         VIRTIO_RDMACM_RESOLVE_ROUTE,
+        VIRTIO_RDMACM_QUERY_ROUTE,
         VIRTIO_RDMACM_CONNECT,
         VIRTIO_RDMACM_DISCONNECT,
         VIRTIO_RDMACM_ACCEPT,
@@ -659,10 +661,21 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         __s32 value;
     };
 
+    struct vrdmacm_query_route_copy_args {
+        struct hcall_header hdr;
+        __u32 ctx_handle;
+    };
+
+    struct vrdmacm_query_route_result {
+        struct hcall_ret_header hdr;
+        __s32 value;
+    };
+
     int vrdmacm_create_id(void *context, enum rdma_port_space ps);
     int vrdmacm_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr);
     struct ib_device* rdmacm_get_ibdev(__be64 node_guid);
     struct vrdmacm_id_priv* rdmacm_id_to_priv(struct rdma_cm_id *id);
+    int vrdmacm_query_route(struct rdma_cm_id *id, struct ucma_abi_query_route_resp *);
 
 
 private:

@@ -107,9 +107,6 @@ int rdma::vrdmacm_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr)
     __be64 *node_guid;
     struct sockaddr *src_addr;
 
-    debug("vrdmacm_bind_addr");
-    debug("priv_id: %p, rdma_cm_id:%p\n", priv_id, id);
-
     node_guid = (__be64 *) kmalloc(sizeof(*node_guid), GFP_KERNEL);
     src_addr = (struct sockaddr *) kmalloc(sizeof(*src_addr), GFP_KERNEL);
     memcpy(src_addr, addr, sizeof(*src_addr));
@@ -146,12 +143,52 @@ int rdma::vrdmacm_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr)
         ret = ret ? ret : hret;
     }
 
-    if(node_guid) {
-        priv_id->device = rdmacm_get_ibdev(*node_guid);
-    }
+    priv_id->device = rdmacm_get_ibdev(*node_guid);
 
     return ret;
 }
 
+
+int rdma::vrdmacm_query_route(struct rdma_cm_id *id, struct ucma_abi_query_route_resp *resp)
+{
+    struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
+    int ret, hret;
+    struct ucma_abi_query_route_resp *kresp;
+
+    kresp = (struct ucma_abi_query_route_resp *) kmalloc(sizeof(*kresp), GFP_KERNEL);
+
+    memset(kresp, 0, sizeof(*kresp));
+
+    {
+        const struct hcall_parg pargs[] = {
+            { kresp, sizeof(*kresp) } ,};
+        struct _args_t {
+            struct vrdmacm_query_route_copy_args copy_args;
+            struct vrdmacm_query_route_result result;
+        } *_args;
+
+        _args = (_args_t *) kmalloc(sizeof(*_args), mem_flags);
+        if (!_args) { ret = -ENOMEM; }
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_RDMACM_QUERY_ROUTE, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST, };
+
+        memcpy(&_args->copy_args.ctx_handle, &priv_id->host_handle, sizeof(priv_id->host_handle));
+
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr,
+                            sizeof(_args->copy_args), pargs, (sizeof(pargs) / sizeof((pargs)[0])),
+                            &_args->result.hdr, sizeof(_args->result));
+        if (!ret)
+            memcpy(&hret, &_args->result.value, sizeof(hret));
+        kfree(_args);
+    }
+    if (ret) {
+        debug("could not query route on host: ret: %d, hret: %d\n", ret, hret);
+        ret = ret ? ret : hret;
+    }
+
+    memcpy(resp, kresp, sizeof(*resp));
+
+    return ret;
+}
 
 }

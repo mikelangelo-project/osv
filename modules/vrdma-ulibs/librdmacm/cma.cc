@@ -473,16 +473,13 @@ static int ucma_query_route(struct rdma_cm_id *id)
 	struct cma_id_private *id_priv;
 	void *msg;
 	int ret, size, i;
-	
-	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, ucma_abi_query_route_resp, UCMA_CMD_QUERY_ROUTE, ucma_abi_query_route, size);
+
+	resp = (ucma_abi_query_route_resp *) alloca(sizeof(*resp));
 	id_priv = container_of(id, struct cma_id_private, id);
-	cmd->id = id_priv->handle;
 
-	ret = write(id->channel->fd, msg, size);
-	if (ret != size)
-		return (ret >= 0) ? ERR(ECONNREFUSED) : -1;
-
-	VALGRIND_MAKE_MEM_DEFINED(resp, sizeof *resp);
+	ret = rdma_drv->vrdmacm_query_route(id, resp);
+	if (ret)
+		return -1;
 
 	if (resp->num_paths) {
 		id->route.path_rec = (ibv_sa_path_rec *) malloc(sizeof *id->route.path_rec *
@@ -491,9 +488,10 @@ static int ucma_query_route(struct rdma_cm_id *id)
 			return ERR(ENOMEM);
 
 		id->route.num_paths = resp->num_paths;
-		for (i = 0; i < resp->num_paths; i++)
+		for (i = 0; i < resp->num_paths; i++) {
 			ibv_copy_path_rec_from_kern(&id->route.path_rec[i],
-						    &resp->ib_route[i]);
+										&resp->ib_route[i]);
+		}
 	}
 
 	memcpy(id->route.addr.addr.ibaddr.sgid.raw, resp->ib_route[0].sgid,
@@ -891,7 +889,7 @@ int rdma_listen(struct rdma_cm_id *id, int backlog)
 	struct cma_id_private *id_priv;
 	void *msg;
 	int ret, size;
-	
+
 	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_LISTEN, ucma_abi_listen, size);
 	id_priv = container_of(id, struct cma_id_private, id);
 	cmd->id = id_priv->handle;
