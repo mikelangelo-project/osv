@@ -662,6 +662,7 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         // void (rdma::*cb)(struct hcall_queue *hvq, void *data, int hcall_result,
         //                  __s32 *result , vrdmacm_event * event, uint32_t event_size);
         // void *cb;
+        bool cb;
         void *data;
         struct hcall_ret_header *hret;
         struct hcall_parg *pargs;

@@ -174,7 +174,7 @@ int rdma::post_event(struct vrdmacm_id_priv *priv_id)
         _args = (_args_t *) kmalloc(sizeof(*_args), mem_flags);
         if (!_args) { return -ENOMEM; }
 
-        _args->async.cb = &rdma::vrdmacm_post_event_cb;
+        _args->async.cb = true;
         _args->async.data = priv_id;
         _args->async.hret = &_args->result.hdr;
         _args->async.pargs = _args->pargs;
@@ -407,6 +407,12 @@ int rdma::vrdmacm_listen(struct rdma_cm_id *id, int backlog)
 
         kfree(_args);
     }
+    if (ret || hret) {
+        debug("could not start listen on host: ret: %d, hret: %d\n", ret, hret);
+        ret = ret ? ret : hret;
+    }
+
+    post_event(priv_id);
 
     return hret;
 }

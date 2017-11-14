@@ -388,7 +388,8 @@ int rdma::do_hcall(struct hcall_queue *hvq, const struct hcall *hcall_p,
     }
 
     pthread_mutex_lock(&hvq->lock);
-    hvq->hcall_acked = false;
+    if(!hcall_p->async)
+        hvq->hcall_acked = false;
 
     hvq->vq->add_in_sg(hret, result_size);
 
@@ -401,8 +402,10 @@ int rdma::do_hcall(struct hcall_queue *hvq, const struct hcall *hcall_p,
     }
 
     // wait until the worker thread got the vq ack
-    while(!hvq->hcall_acked) {
-        pthread_cond_wait(&hvq->cond, &hvq->lock);
+    if(!hcall_p->async) {
+        while(!hvq->hcall_acked) {
+            pthread_cond_wait(&hvq->cond, &hvq->lock);
+        }
     }
     pthread_mutex_unlock(&hvq->lock);
 
