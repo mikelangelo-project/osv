@@ -223,7 +223,7 @@ void rdma::handle_irq()
 //virtio_hyv_event.c: virtio_hyv_ack_event
 void rdma::handle_event()
 {
-    debug("vRDMA: evnet ack handler.\n");
+    debug("vRDMA: event ack handler.\n");
     auto *vq = _event_queue.vq;
     struct hyv_event event;
 
@@ -352,7 +352,7 @@ void rdma::handle_hcall()
                 container_of(hcall_p, struct hcall_async,
                      base);
             if (async->cb) {
-                //async->cbw(_vg->vq_hcall, async);
+                vrdmacm_post_event_callback_wrapper(_vg->vq_hcall, async);
             }
             // kfree(async);
         } else {

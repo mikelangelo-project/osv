@@ -890,14 +890,15 @@ int rdma_listen(struct rdma_cm_id *id, int backlog)
 	void *msg;
 	int ret, size;
 
+	printf("cma: rdma_listen\n");
 	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_LISTEN, ucma_abi_listen, size);
 	id_priv = container_of(id, struct cma_id_private, id);
 	cmd->id = id_priv->handle;
 	cmd->backlog = backlog;
 
-	ret = write(id->channel->fd, msg, size);
-	if (ret != size)
-		return (ret >= 0) ? ERR(ECONNREFUSED) : -1;
+	ret = rdma_drv->vrdmacm_listen(id, backlog);
+	if (ret)
+		return ret;
 
 	return ucma_query_route(id);
 }
