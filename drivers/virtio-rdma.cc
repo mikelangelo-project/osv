@@ -341,27 +341,17 @@ void rdma::handle_hcall()
         struct hcall * hcall_p = (struct hcall *) vq->get_buf_elem(&len);
         vq->get_buf_finalize();
 
+        if (hcall_p->is_async) {
+            debug("vRDMA: async hcall.\n");
+            struct hcall_async *async = container_of(hcall_p, struct hcall_async, base);
+            _hcall_queue.async = async;
+        } else {
+            debug("vRDMA: sync hcall.\n");
+        }
+
         _hcall_queue.hcall_acked = true;
         pthread_cond_signal(&_hcall_queue.cond);
         pthread_mutex_unlock(&_hcall_queue.lock);
-
-        if (hcall_p->async) {
-            debug("vRDMA: async hcall.\n");
-
-            struct hcall_async *async =
-                container_of(hcall_p, struct hcall_async,
-                     base);
-            if (async->cb) {
-                vrdmacm_post_event_callback_wrapper(_vg->vq_hcall, async);
-            }
-            // kfree(async);
-        } else {
-            debug("vRDMA: sync hcall.\n");
-            // struct hcall_sync *sync =
-            //     container_of(hcall_p, struct hcall_sync,
-            //          base);
-            // complete(&hcall_sync->completion);
-        }
     }
 }
 
@@ -388,7 +378,7 @@ int rdma::do_hcall(struct hcall_queue *hvq, const struct hcall *hcall_p,
     }
 
     pthread_mutex_lock(&hvq->lock);
-    if(!hcall_p->async)
+    if(!hcall_p->is_async)
         hvq->hcall_acked = false;
 
     hvq->vq->add_in_sg(hret, result_size);
@@ -402,11 +392,12 @@ int rdma::do_hcall(struct hcall_queue *hvq, const struct hcall *hcall_p,
     }
 
     // wait until the worker thread got the vq ack
-    if(!hcall_p->async) {
+    if(!hcall_p->is_async) {
         while(!hvq->hcall_acked) {
             pthread_cond_wait(&hvq->cond, &hvq->lock);
         }
     }
+    hvq->hcall_acked = false;
     pthread_mutex_unlock(&hvq->lock);
 
     return ret;
@@ -420,7 +411,7 @@ int rdma::do_hcall_sync(struct hcall_queue *hvq,
     int ret;
     struct hcall_sync hcall_sync;
 
-    hcall_sync.base.async = false;
+    hcall_sync.base.is_async = false;
 
     ret = do_hcall(hvq, &hcall_sync.base, hdr, copy_size, pargs, npargs,
                hret, result_size);
@@ -440,7 +431,7 @@ int rdma::do_hcall_async(struct hcall_queue *hvq,
                const struct hcall_header *hdr, uint32_t copy_size,
                uint32_t npargs, uint32_t result_size)
 {
-    hcall_async->base.async = true;
+    hcall_async->base.is_async = true;
 
     return do_hcall(hvq, &hcall_async->base, hdr, copy_size,
                 hcall_async->pargs, npargs, hcall_async->hret,

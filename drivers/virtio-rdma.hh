@@ -126,6 +126,36 @@ public:
         pthread_mutex_t lock;
     };
 
+    struct hcall
+    {
+        u32 is_async;
+    };
+
+    struct hcall_sync
+    {
+        struct hcall base;
+    };
+
+    struct hcall_parg
+    {
+        void *ptr;
+        uint32_t size;
+    };
+
+    struct hcall_ret_header
+    {
+        int32_t value;
+    };
+
+    struct hcall_async
+    {
+        struct hcall base;
+        bool cb;
+        void *data;
+        struct hcall_ret_header *hret;
+        struct hcall_parg *pargs;
+    };
+
     // rewritten from hcall_vq struct
     struct hcall_queue
     {
@@ -137,6 +167,8 @@ public:
         std::unique_ptr<sched::thread> hcall_poll_task;
         pthread_mutex_t lock;
         pthread_cond_t cond;
+        struct hcall_async* async;
+        int channel_fd;
         bool hcall_acked;
     };
 
@@ -167,17 +199,6 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         uint32_t id : 22;
         uint32_t async : 1;
         uint32_t flags : 9;
-    };
-
-    struct hcall_parg
-    {
-        void *ptr;
-        uint32_t size;
-    };
-
-    struct hcall_ret_header
-    {
-        int32_t value;
     };
 
     typedef struct
@@ -358,16 +379,6 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         __u32 qp_handle;
         hyv_qp_attr attr;
         __u32 attr_mask;
-    };
-
-    struct hcall
-    {
-        u32 async;
-    };
-
-    struct hcall_sync
-    {
-        struct hcall base;
     };
 
     // hyv device
@@ -605,8 +616,8 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
 
     // RDMA CM
 
-
 #define RDMACM_MAX_PRIVATE_DATA 256
+
     struct vrdmacm_id_priv
     {
         bool conn_done;
@@ -656,18 +667,6 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     //                                              __s32 *result , vrdmacm_event * event, uint32_t event_size);
     // typedef void (*vrdmacm_post_event_callback_wrapper_t)(struct hcall_queue *hvq, struct hcall_async *async);
 
-    struct hcall_async
-    {
-        struct hcall base;
-        // void (rdma::*cb)(struct hcall_queue *hvq, void *data, int hcall_result,
-        //                  __s32 *result , vrdmacm_event * event, uint32_t event_size);
-        // void *cb;
-        bool cb;
-        void *data;
-        struct hcall_ret_header *hret;
-        struct hcall_parg *pargs;
-    };
-
     struct vrdmacm_post_event_copy_args {
         struct hcall_header hdr;
         __u32 ctx_handle;
@@ -703,7 +702,7 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
 
     struct vrdmacm_query_route_copy_args {
         struct hcall_header hdr;
-        __u32 ctx_handle;
+        uint32_t ctx_handle;
     };
 
     struct vrdmacm_query_route_result {
@@ -739,16 +738,14 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     void copy_rdmacm_conn_param_to_virt(const struct rdma_conn_param *src, struct vrdmacm_conn_param *dst);
     void copy_virt_event_to_rdmacm(const struct vrdmacm_event *vevent, struct rdma_cm_event *event);
     void copy_rdmacm_event_to_virt(const struct rdma_cm_event *event, vrdmacm_event *vevent);
-    void vrdmacm_post_event_callback_wrapper(struct hcall_queue *hvq, struct hcall_async *async);
-    void vrdmacm_post_event_cb(struct hcall_queue *hvq, void *data, int hcall_result,
-                        __s32 *result, vrdmacm_event *vevent, uint32_t event_size);
     int post_event(struct vrdmacm_id_priv *priv_id);
-    int vrdmacm_create_id(void *context, enum rdma_port_space ps);
+    int vrdmacm_create_id(struct rdma_event_channel *channel, void *context, enum rdma_port_space ps);
     int vrdmacm_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr);
     struct ib_device* rdmacm_get_ibdev(__be64 node_guid);
     struct vrdmacm_id_priv* rdmacm_id_to_priv(struct rdma_cm_id *id);
     int vrdmacm_query_route(struct rdma_cm_id *id, struct ucma_abi_query_route_resp *);
     int vrdmacm_listen(struct rdma_cm_id *id, int backlog);
+    int vrdmacm_get_cm_event(int fd, struct rdma_cm_event *event);
 
 private:
     void handle_event();

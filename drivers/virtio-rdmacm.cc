@@ -13,7 +13,7 @@ void rdma::copy_virt_conn_param_to_rdmacm(const struct vrdmacm_conn_param *src,
                                struct rdma_conn_param *dst)
 {
     if (src->private_data_len) {
-        dst->private_data = (__u8 *) kzalloc(src->private_data_len, GFP_KERNEL);
+        dst->private_data = (__u8 *) malloc(src->private_data_len);
         memcpy((void *) dst->private_data, src->private_data,
                src->private_data_len);
     }
@@ -26,6 +26,7 @@ void rdma::copy_virt_conn_param_to_rdmacm(const struct vrdmacm_conn_param *src,
     dst->rnr_retry_count = src->rnr_retry_count;
     dst->srq = src->srq;
     dst->qp_num = src->qp_num;
+    // we don't have qkey member in the user space
     // dst->qkey = src->qkey;
 }
 
@@ -45,29 +46,9 @@ void rdma::copy_rdmacm_conn_param_to_virt(const struct rdma_conn_param *src,
     dst->rnr_retry_count = src->rnr_retry_count;
     dst->srq = src->srq;
     dst->qp_num = src->qp_num;
+    // we don't have qkey member in the user space
     // dst->qkey = src->qkey;
 }
-
-// RDMA CM hypercalls
-void rdma::vrdmacm_post_event_callback_wrapper( struct hcall_queue *hvq, struct hcall_async *async)
-{
-    uint32_t i = 0;
-    struct {
-        struct vrdmacm_event * event;
-        uint32_t event_size;
-    } _args;
-
-    // vrdmacm_post_event_callback_t cb = (vrdmacm_post_event_callback_t) async->cb;
-
-    struct vrdmacm_post_event_result *result = (struct vrdmacm_post_event_result *)async->hret;
-
-    _args.event = (vrdmacm_event * )async->pargs[i].ptr;
-    _args.event_size = async->pargs[i++].size;
-
-    //async->*virtio::rdma::hcall_async::cb(hvq, async->data, result->hdr.value, &result->value , _args.event, _args.event_size);
-    vrdmacm_post_event_cb(hvq, async->data, result->hdr.value, &result->value , _args.event, _args.event_size);
-}
-
 
 void rdma::copy_virt_event_to_rdmacm(const struct vrdmacm_event *vevent,
                                      struct rdma_cm_event *event)
@@ -86,66 +67,6 @@ void rdma::copy_rdmacm_event_to_virt(const struct rdma_cm_event *event,
     vevent->event = event->event;
     vevent->status = event->status;
 }
-
-void rdma::vrdmacm_post_event_cb(struct hcall_queue *hvq, void *data,
-              int hcall_result, __s32 *result,
-              vrdmacm_event *vevent, uint32_t event_size)
-{
-    struct vrdmacm_id_priv *priv_id = (struct vrdmacm_id_priv *) data;
-    struct rdma_cm_event event;
-
-    debug("priv_id = 0x%p, event = { .event = %d, .status = %d }\n",
-           priv_id, vevent->event, vevent->status);
-
-    // we don't need the the whole rdma_cm id from the host,
-    // but we have to retrieve the address infomation of the endpoints
-    priv_id->id.route.addr = vevent->route.addr;
-
-    switch(vevent->event) {
-    case RDMA_CM_EVENT_CONNECT_REQUEST:
-    case RDMA_CM_EVENT_ADDR_RESOLVED:
-    {
-        struct ib_device *ibdev;
-
-        debug("rdma addr resolved/connect request => set device\n");
-
-        ibdev = rdmacm_get_ibdev(vevent->node_guid);
-        if (!ibdev) {
-            debug("device does not exists (%llx)\n",
-                   vevent->node_guid);
-            vevent->event = RDMA_CM_EVENT_ADDR_ERROR;
-        } else {
-            priv_id->device = ibdev;
-        }
-        debug("priv_id->id.device: %p\n", priv_id->device);
-
-        break;
-    }
-    case RDMA_CM_EVENT_REJECTED:
-    case RDMA_CM_EVENT_DISCONNECTED:
-    case RDMA_CM_EVENT_ESTABLISHED:
-        break;
-    default:
-        break;
-    }
-
-    // TODO: add support for UD
-    copy_virt_event_to_rdmacm(vevent, &event);
-
-    /* TODO: handle destroy of cm */
-    if (hcall_result) {
-        debug("hypercall failed on host (%d)\n", hcall_result);
-        goto fail;
-    }
-
-    // if (priv_id->id.event_handler(&priv_id->id, &event)) {
-    //     rdma_destroy_id(&priv_id->id);
-    // }
-
-fail:
-    kfree(vevent);
-}
-
 
 int rdma::post_event(struct vrdmacm_id_priv *priv_id)
 {
@@ -176,7 +97,7 @@ int rdma::post_event(struct vrdmacm_id_priv *priv_id)
 
         _args->async.cb = true;
         _args->async.data = priv_id;
-        _args->async.hret = &_args->result.hdr;
+        _args->async.hret = (hcall_ret_header*) &_args->result.hdr;
         _args->async.pargs = _args->pargs;
         _args->pargs[i++] = (struct hcall_parg) { event, sizeof(*event) };
         _args->copy_args.hdr = (struct hcall_header) { VIRTIO_RDMACM_POST_EVENT, 1, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
@@ -199,7 +120,7 @@ fail:
     return ret;
 }
 
-int rdma::vrdmacm_create_id(void *context, enum rdma_port_space ps)
+int rdma::vrdmacm_create_id(struct rdma_event_channel *channel, void *context, enum rdma_port_space ps)
 {
     struct vrdmacm_id_priv *priv_id;
     int ret, hret;
@@ -266,6 +187,9 @@ int rdma::vrdmacm_create_id(void *context, enum rdma_port_space ps)
 
     // used as ucma_context->cm_id
     priv_id->host_handle = hret;
+
+    // set up the event channel using host_handle
+    channel->fd = priv_id->host_handle;
 
     post_event(priv_id);
 
@@ -359,10 +283,13 @@ int rdma::vrdmacm_query_route(struct rdma_cm_id *id, struct ucma_abi_query_route
         _args = (_args_t *) kmalloc(sizeof(*_args), mem_flags);
         if (!_args) { return -ENOMEM; }
 
+
         _args->copy_args.hdr = (struct hcall_header) { VIRTIO_RDMACM_QUERY_ROUTE, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST, };
 
         memcpy(&_args->copy_args.ctx_handle, &priv_id->host_handle, sizeof(priv_id->host_handle));
 
+        debug("priv_id->host_handle: %d\n", priv_id->host_handle);
+        debug("vrdmacm_query_route ctx_handle: %d\n", _args->copy_args.ctx_handle);
         ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr,
                             sizeof(_args->copy_args), pargs, (sizeof(pargs) / sizeof((pargs)[0])),
                             &_args->result.hdr, sizeof(_args->result));
@@ -385,6 +312,7 @@ int rdma::vrdmacm_listen(struct rdma_cm_id *id, int backlog)
     struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
     int ret, hret;
 
+    debug("vrdmacm_listen: priv_id: %p\n", priv_id);
     {
         const struct hcall_parg pargs[] = { };
         struct _args_t {
@@ -410,11 +338,91 @@ int rdma::vrdmacm_listen(struct rdma_cm_id *id, int backlog)
     if (ret || hret) {
         debug("could not start listen on host: ret: %d, hret: %d\n", ret, hret);
         ret = ret ? ret : hret;
+    } else {
+        post_event(priv_id);
     }
 
-    post_event(priv_id);
-
     return hret;
+}
+
+int rdma::vrdmacm_get_cm_event(int fd, struct rdma_cm_event *event)
+{
+    int hcall_result;
+    vrdmacm_id_priv * priv_id;
+    struct vrdmacm_event *vevent;
+
+    debug("vRDMA: vrdmacm_get_cm_event\n");
+
+    pthread_mutex_lock(&_hcall_queue.lock);
+    while(true) {
+        pthread_cond_wait(&_hcall_queue.cond, &_hcall_queue.lock);
+
+        // check if there is an event and if it's in our channel
+        if (_hcall_queue.hcall_acked && fd == _hcall_queue.channel_fd) {
+            break;
+        }
+    }
+
+    priv_id = (struct vrdmacm_id_priv *) &_hcall_queue.async->data;
+    hcall_result = _hcall_queue.async->hret->value;
+    vevent = (vrdmacm_event * ) _hcall_queue.async->pargs[0].ptr;
+    _hcall_queue.hcall_acked = false;
+    pthread_mutex_unlock(&_hcall_queue.lock);
+
+    event = (rdma_cm_event *) malloc(sizeof(*event));
+
+    // now process the event
+    {
+        debug("priv_id = 0x%p, event = { .event = %d, .status = %d }\n",
+              priv_id, vevent->event, vevent->status);
+
+        // we don't need the the whole rdma_cm id from the host,
+        // but we have to retrieve the address infomation of the endpoints
+        priv_id->id.route.addr = vevent->route.addr;
+
+        switch(vevent->event) {
+        case RDMA_CM_EVENT_CONNECT_REQUEST:
+        case RDMA_CM_EVENT_ADDR_RESOLVED:
+        {
+            struct ib_device *ibdev;
+
+            debug("rdma addr resolved/connect request => set device\n");
+
+            ibdev = rdmacm_get_ibdev(vevent->node_guid);
+            if (!ibdev) {
+                debug("device does not exists (%llx)\n",
+                      vevent->node_guid);
+                vevent->event = RDMA_CM_EVENT_ADDR_ERROR;
+            } else {
+                priv_id->device = ibdev;
+            }
+            debug("priv_id->id.device: %p\n", priv_id->device);
+
+            break;
+        }
+        case RDMA_CM_EVENT_REJECTED:
+        case RDMA_CM_EVENT_DISCONNECTED:
+        case RDMA_CM_EVENT_ESTABLISHED:
+            break;
+        default:
+            debug("Unknown event: %d!\n", vevent->event);
+            goto fail;
+        }
+
+        // TODO: add support for UD
+        copy_virt_event_to_rdmacm(vevent, event);
+
+        /* TODO: handle destroy of cm */
+        if (hcall_result) {
+            debug("hypercall failed on host (%d)\n", hcall_result);
+            goto fail;
+        }
+    }
+
+    return hcall_result;
+fail:
+    kfree(vevent);
+    return hcall_result;
 }
 
 }
