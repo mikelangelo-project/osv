@@ -288,8 +288,6 @@ int rdma::vrdmacm_query_route(struct rdma_cm_id *id, struct ucma_abi_query_route
 
         memcpy(&_args->copy_args.ctx_handle, &priv_id->host_handle, sizeof(priv_id->host_handle));
 
-        debug("priv_id->host_handle: %d\n", priv_id->host_handle);
-        debug("vrdmacm_query_route ctx_handle: %d\n", _args->copy_args.ctx_handle);
         ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr,
                             sizeof(_args->copy_args), pargs, (sizeof(pargs) / sizeof((pargs)[0])),
                             &_args->result.hdr, sizeof(_args->result));
@@ -312,7 +310,6 @@ int rdma::vrdmacm_listen(struct rdma_cm_id *id, int backlog)
     struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
     int ret, hret;
 
-    debug("vrdmacm_listen: priv_id: %p\n", priv_id);
     {
         const struct hcall_parg pargs[] = { };
         struct _args_t {
@@ -338,9 +335,9 @@ int rdma::vrdmacm_listen(struct rdma_cm_id *id, int backlog)
     if (ret || hret) {
         debug("could not start listen on host: ret: %d, hret: %d\n", ret, hret);
         ret = ret ? ret : hret;
-    } else {
-        post_event(priv_id);
     }
+
+    post_event(priv_id);
 
     return hret;
 }
