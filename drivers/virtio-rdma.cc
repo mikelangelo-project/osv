@@ -343,8 +343,7 @@ void rdma::handle_hcall()
 
         if (hcall_p->is_async) {
             debug("vRDMA: async hcall.\n");
-            struct hcall_async *async = container_of(hcall_p, struct hcall_async, base);
-            _hcall_queue.async = async;
+            _hcall_queue.async = container_of(hcall_p, struct hcall_async, base);
         } else {
             debug("vRDMA: sync hcall.\n");
         }
