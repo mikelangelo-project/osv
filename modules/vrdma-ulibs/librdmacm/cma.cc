@@ -1302,11 +1302,8 @@ int rdma_get_cm_event(struct rdma_event_channel *channel,
 		      struct rdma_cm_event **event)
 {
 	struct ucma_abi_event_resp *resp;
-	struct cma_event *evt;
 	void *msg;
 	int ret, size;
-
-	printf("cma: rdma_get_cm_event\n");
 
 	ret = cma_dev_cnt ? 0 : ucma_init();
 	if (ret)
@@ -1314,17 +1311,11 @@ int rdma_get_cm_event(struct rdma_event_channel *channel,
 
 	if (!event)
 		return ERR(EINVAL);
-
-	evt = (cma_event *) malloc(sizeof *evt);
-	if (!evt)
-		return ERR(ENOMEM);
-
 retry:
-	memset(evt, 0, sizeof *evt);
+	*event = (rdma_cm_event *) malloc(sizeof(**event));
 
 	ret = rdma_drv->vrdmacm_get_cm_event(channel->fd, *event);
 	if (ret != 0) {
-		free(evt);
 		return (ret >= 0) ? ERR(ECONNREFUSED) : -1;
 	}
 

@@ -366,8 +366,6 @@ int rdma::vrdmacm_get_cm_event(int fd, struct rdma_cm_event *event)
     _hcall_queue.hcall_acked = false;
     pthread_mutex_unlock(&_hcall_queue.lock);
 
-    event = (rdma_cm_event *) malloc(sizeof(*event));
-
     // now process the event
     {
         debug("priv_id = 0x%p, event = { .event = %d, .status = %d }\n",
