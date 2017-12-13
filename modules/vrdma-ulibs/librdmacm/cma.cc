@@ -585,20 +585,12 @@ static int rdma_init_qp_attr(struct rdma_cm_id *id, struct ibv_qp_attr *qp_attr,
 	struct cma_id_private *id_priv;
 	void *msg;
 	int ret, size;
-	
-	CMA_CREATE_MSG_CMD_RESP(msg, cmd, resp, ibv_kern_qp_attr, UCMA_CMD_INIT_QP_ATTR, ucma_abi_init_qp_attr, size);
-	id_priv = container_of(id, struct cma_id_private, id);
+
 	cmd->id = id_priv->handle;
 	cmd->qp_state = qp_attr->qp_state;
 
-	ret = write(id->channel->fd, msg, size);
-	if (ret != size)
-		return (ret >= 0) ? ERR(ECONNREFUSED) : -1;
+	ret = rdma_drv->vrdmacm_init_qp_attr(id, qp_attr, qp_attr_mask);
 
-	VALGRIND_MAKE_MEM_DEFINED(resp, sizeof *resp);
-
-	ibv_copy_qp_attr_from_kern(qp_attr, resp);
-	*qp_attr_mask = resp->qp_attr_mask;
 	return 0;
 }
 

@@ -403,6 +403,49 @@ fail:
 }
 
 
+int rdma::vrdmacm_init_qp_attr(struct rdma_cm_id *id, struct ibv_qp_attr *qp_attr,int *qp_attr_mask)
+{
+    struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
+    struct ib_qp_attr *kqp_attr;
+    int ret, hret, *kqp_attr_mask;
+
+    kqp_attr = (ib_qp_attr *) kmalloc(sizeof(*kqp_attr), GFP_KERNEL);
+    if (!kqp_attr) { return -ENOMEM; }
+
+    kqp_attr_mask = (int *) kmalloc(sizeof(*kqp_attr_mask), GFP_KERNEL);
+    if (!kqp_attr_mask) { return -ENOMEM; }
+
+    memcpy(kqp_attr, qp_attr, sizeof(*qp_attr));
+    memcpy(kqp_attr_mask, qp_attr_mask, sizeof(*qp_attr_mask));
+
+    {
+        const struct hcall_parg pargs[] = { { kqp_attr, sizeof(*kqp_attr) } , { kqp_attr_mask, sizeof(*kqp_attr_mask) } , };
+        struct _args_t {
+            struct vrdmacm_init_qp_attr_copy_args copy_args;
+            struct vrdmacm_init_qp_attr_result result;
+        } *_args;
+
+        _args = (_args_t *) kmalloc(sizeof(*_args), GFP_KERNEL);
+        if (!_args) { return -ENOMEM; }
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_RDMACM_INIT_QP_ATTR, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+        memcpy(&_args->copy_args.ctx_handle, &priv_id->host_handle, sizeof(priv_id->host_handle));
+
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args), pargs,
+                            sizeof(pargs) / sizeof((pargs)[0]), &_args->result.hdr, sizeof(_args->result));
+
+        if (!ret) memcpy(&hret, &_args->result.value, sizeof(hret));
+        kfree(_args);
+    }
+    if (ret || hret) {
+        debug("could not init qp attr on host\n");
+        ret = ret ? ret : hret;
+    }
+
+    return ret;
+}
+
+
 int rdma::vrdmacm_get_cm_event(int fd, struct rdma_cm_event *event)
 {
     int hcall_result;
