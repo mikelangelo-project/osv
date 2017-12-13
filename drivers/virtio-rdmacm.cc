@@ -283,7 +283,6 @@ int rdma::vrdmacm_query_route(struct rdma_cm_id *id, struct ucma_abi_query_route
         _args = (_args_t *) kmalloc(sizeof(*_args), mem_flags);
         if (!_args) { return -ENOMEM; }
 
-
         _args->copy_args.hdr = (struct hcall_header) { VIRTIO_RDMACM_QUERY_ROUTE, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST, };
 
         memcpy(&_args->copy_args.ctx_handle, &priv_id->host_handle, sizeof(priv_id->host_handle));
@@ -341,6 +340,68 @@ int rdma::vrdmacm_listen(struct rdma_cm_id *id, int backlog)
 
     return hret;
 }
+
+int rdma::vrdmacm_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
+                            struct sockaddr *dst_addr, int timeout_ms)
+{
+    struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
+    int ret, hret;
+    uint32_t addr_size;
+    struct sockaddr *addr;
+
+    addr = (sockaddr*) kmalloc(sizeof(*addr) * 2, GFP_KERNEL);
+    if (!addr) {
+        debug("could not alloc addr\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
+    if (src_addr) {
+        memcpy(addr, src_addr, sizeof(*src_addr));
+    }
+    if (dst_addr) {
+        memcpy(addr + 1, dst_addr, sizeof(*dst_addr));
+    }
+
+    addr_size = sizeof(*addr) * 2;
+
+    {
+        uint32_t src_available = src_addr != NULL;
+        uint32_t dst_available = dst_addr != NULL;
+
+        const struct hcall_parg pargs[] = { { addr, addr_size } , };
+        struct _args_t {
+            struct vrdmacm_resolve_addr_copy_args copy_args;
+            struct vrdmacm_resolve_addr_result result;
+        } *_args;
+
+        _args = (_args_t *) kmalloc(sizeof(*_args), mem_flags);
+        if (!_args) { return -ENOMEM; }
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_RDMACM_RESOLVE_ADDR, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+        memcpy(&_args->copy_args.ctx_handle, &priv_id->host_handle, sizeof(priv_id->host_handle));
+        memcpy(&_args->copy_args.timeout_ms, &timeout_ms, sizeof(timeout_ms));
+        memcpy(&_args->copy_args.src_available, &src_available, sizeof(src_available));
+        memcpy(&_args->copy_args.dst_available, &dst_available, sizeof(dst_available));
+
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args), pargs,
+                                (sizeof(pargs) / sizeof((pargs)[0])), &_args->result.hdr, sizeof(_args->result));
+        if (!ret)
+            memcpy(&hret, &_args->result.value, sizeof(hret));
+
+        kfree(_args);
+    }
+    if (ret || hret) {
+        debug("could not resolve addr on host\n");
+        ret = ret ? ret : hret;
+    }
+    kfree(addr);
+
+    post_event(priv_id);
+
+fail:
+    return ret;
+}
+
 
 int rdma::vrdmacm_get_cm_event(int fd, struct rdma_cm_event *event)
 {
@@ -406,6 +467,8 @@ int rdma::vrdmacm_get_cm_event(int fd, struct rdma_cm_event *event)
 
         // TODO: add support for UD
         copy_virt_event_to_rdmacm(vevent, event);
+        event->id = &priv_id->id;
+        event->listen_id = &priv_id->listen_id;
 
         /* TODO: handle destroy of cm */
         if (hcall_result) {

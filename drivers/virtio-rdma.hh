@@ -624,6 +624,7 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         uint32_t host_handle;
         struct ib_device *device;
         struct rdma_cm_id id;
+        struct rdma_cm_id listen_id;
     };
 
     struct vrdmacm_ud_param
@@ -662,10 +663,6 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         __be64 node_guid;
         struct rdma_route route;
     };
-
-    // typedef void (virtio::rdma::*vrdmacm_post_event_callback_t) (struct hcall_queue *hvq, void *data, int hcall_result,
-    //                                              __s32 *result , vrdmacm_event * event, uint32_t event_size);
-    // typedef void (*vrdmacm_post_event_callback_wrapper_t)(struct hcall_queue *hvq, struct hcall_async *async);
 
     struct vrdmacm_post_event_copy_args {
         struct hcall_header hdr;
@@ -721,6 +718,19 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         __s32 value;
     };
 
+    struct vrdmacm_resolve_addr_copy_args {
+        struct hcall_header hdr;
+        __u32 ctx_handle;
+        __s32 timeout_ms;
+        __u32 src_available;
+        __u32 dst_available;
+    };
+
+    struct vrdmacm_resolve_addr_result {
+        struct hcall_ret_header hdr;
+        __s32 value;
+    };
+
     int do_hcall_async(struct hcall_queue *hvq,
                        struct hcall_async *async,
                        const struct hcall_header *hdr, uint32_t copy_size,
@@ -746,6 +756,8 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     int vrdmacm_query_route(struct rdma_cm_id *id, struct ucma_abi_query_route_resp *);
     int vrdmacm_listen(struct rdma_cm_id *id, int backlog);
     int vrdmacm_get_cm_event(int fd, struct rdma_cm_event *event);
+    int vrdmacm_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
+                             struct sockaddr *dst_addr, int timeout_ms);
 
 private:
     void handle_event();
