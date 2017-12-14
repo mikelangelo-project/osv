@@ -73,7 +73,7 @@ int rdma::post_event(struct vrdmacm_id_priv *priv_id)
     int ret;
     vrdmacm_event *event;
 
-    debug("post_event\n");
+    debug("vRDMA: post_event\n");
 
     /* we might be in interrupt context */
     event = (vrdmacm_event *) kmalloc(sizeof(*event), GFP_ATOMIC);
@@ -126,7 +126,7 @@ int rdma::vrdmacm_create_id(struct rdma_event_channel *channel, void *context, e
     int ret, hret;
     enum ib_qp_type qp_type;
 
-    debug("vrdmacm_create_id\n");
+    debug("vRDMA: vrdmacm_create_id\n");
 
     switch (ps) {
     case RDMA_PS_TCP:
@@ -220,6 +220,8 @@ int rdma::vrdmacm_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr)
     __be64 *node_guid;
     struct sockaddr *src_addr;
 
+    debug("vRDMA: vrdmacm_bind_addr\n");
+
     node_guid = (__be64 *) kmalloc(sizeof(*node_guid), GFP_KERNEL);
     src_addr = (struct sockaddr *) kmalloc(sizeof(*src_addr), GFP_KERNEL);
     memcpy(src_addr, addr, sizeof(*src_addr));
@@ -268,6 +270,8 @@ int rdma::vrdmacm_query_route(struct rdma_cm_id *id, struct ucma_abi_query_route
     int ret, hret;
     struct ucma_abi_query_route_resp *kresp;
 
+    debug("vRDMA: vrdmacm_query_route\n");
+
     kresp = (struct ucma_abi_query_route_resp *) kmalloc(sizeof(*kresp), GFP_KERNEL);
 
     memset(kresp, 0, sizeof(*kresp));
@@ -309,6 +313,8 @@ int rdma::vrdmacm_listen(struct rdma_cm_id *id, int backlog)
     struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
     int ret, hret;
 
+    debug("vRDMA: vrdmacm_listen\n");
+
     {
         const struct hcall_parg pargs[] = { };
         struct _args_t {
@@ -348,6 +354,8 @@ int rdma::vrdmacm_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
     int ret, hret;
     uint32_t addr_size;
     struct sockaddr *addr;
+
+    debug("vRDMA: vrdmacm_resolve_addr\n");
 
     addr = (sockaddr*) kmalloc(sizeof(*addr) * 2, GFP_KERNEL);
     if (!addr) {
@@ -409,11 +417,21 @@ int rdma::vrdmacm_init_qp_attr(struct rdma_cm_id *id, struct ibv_qp_attr *qp_att
     struct ib_qp_attr *kqp_attr;
     int ret, hret, *kqp_attr_mask;
 
+    debug("vRDMA: vrdmacm_init_qp_attr\n");
+
     kqp_attr = (ib_qp_attr *) kmalloc(sizeof(*kqp_attr), GFP_KERNEL);
-    if (!kqp_attr) { return -ENOMEM; }
+    if (!kqp_attr) {
+        debug("could not allocate qp_attr param\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
 
     kqp_attr_mask = (int *) kmalloc(sizeof(*kqp_attr_mask), GFP_KERNEL);
-    if (!kqp_attr_mask) { return -ENOMEM; }
+    if (!kqp_attr_mask) {
+        debug("could not allocate qp_attr_mask param\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
 
     memcpy(kqp_attr, qp_attr, sizeof(*qp_attr));
     memcpy(kqp_attr_mask, qp_attr_mask, sizeof(*qp_attr_mask));
@@ -445,6 +463,124 @@ int rdma::vrdmacm_init_qp_attr(struct rdma_cm_id *id, struct ibv_qp_attr *qp_att
     memcpy(qp_attr, kqp_attr, sizeof(*kqp_attr));
     memcpy(qp_attr_mask, kqp_attr_mask, sizeof(*kqp_attr_mask));
 
+    kfree(kqp_attr);
+    kfree(kqp_attr_mask);
+
+fail:
+    return ret;
+}
+
+
+int rdma::vrdmacm_connect(struct rdma_cm_id *id, struct rdma_conn_param *conn_param)
+{
+    struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
+    vrdmacm_conn_param *vconn_param;
+    int ret, hret;
+
+    debug("vRDMA: vrdmacm_connect\n");
+
+    vconn_param = (struct vrdmacm_conn_param *) kmalloc(sizeof(*vconn_param), GFP_KERNEL);
+    if (!vconn_param) {
+        debug("could not allocate conn param\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
+
+    if (id->qp) {
+        conn_param->qp_num = id->qp->qp_num;
+        conn_param->srq = id->qp->srq != NULL;
+    }
+
+    copy_rdmacm_conn_param_to_virt(conn_param, vconn_param);
+
+    {
+        const struct hcall_parg pargs[] = { { vconn_param, sizeof(*vconn_param) } , };
+
+        struct _args_t {
+            struct vrdmacm_connect_copy_args copy_args;
+            struct vrdmacm_connect_result result;
+        } *_args;
+
+        _args = ( _args_t  *) kmalloc(sizeof(*_args), GFP_KERNEL);
+        if (!_args) { return -ENOMEM; }
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_RDMACM_CONNECT, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+
+        memcpy(&_args->copy_args.ctx_handle, &priv_id->host_handle, sizeof(priv_id->host_handle));
+
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args), pargs,
+                            sizeof(pargs) / sizeof((pargs)[0]), &_args->result.hdr, sizeof(_args->result));
+
+        if (!ret) memcpy(&hret, &_args->result.value, sizeof(hret));
+        kfree(_args);
+    }
+    if (ret || hret) {
+        debug("could not connect on host\n");
+        ret = ret ? ret : hret;
+    }
+
+    post_event(priv_id);
+
+    kfree(vconn_param);
+
+fail:
+    return ret;
+}
+
+
+int rdma::vrdmacm_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_param)
+{
+    struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
+    int ret, hret;
+    vrdmacm_conn_param *vconn_param;
+
+    debug("vRDMA: vrdmacm_accept\n");
+
+    vconn_param = (struct vrdmacm_conn_param *) kmalloc(sizeof(*vconn_param), GFP_KERNEL);
+    if (!vconn_param) {
+        debug("could not allocate conn param\n");
+        ret = -ENOMEM;
+        goto fail;
+    }
+
+    if(conn_param) {
+        if (id->qp && conn_param) {
+            conn_param->qp_num = id->qp->qp_num;
+            conn_param->srq = id->qp->srq != NULL;
+        }
+        copy_rdmacm_conn_param_to_virt(conn_param, vconn_param);
+    }
+
+    {
+        __u32 param_available = conn_param != NULL;
+        const struct hcall_parg pargs[] = { { vconn_param, sizeof(*vconn_param) } , };
+        struct _args_t {
+            struct vrdmacm_accept_copy_args copy_args;
+            struct vrdmacm_accept_result result; }
+        *_args;
+
+        _args = (_args_t *) kmalloc(sizeof(*_args), GFP_KERNEL);
+        if (!_args) { return -ENOMEM; }
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_RDMACM_ACCEPT, 0,  HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+
+        memcpy(&_args->copy_args.ctx_handle, &priv_id->host_handle, sizeof(priv_id->host_handle));
+        memcpy(&_args->copy_args.param_available, &param_available, sizeof(param_available));
+
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args), pargs,
+                            sizeof(pargs) / sizeof((pargs)[0]), &_args->result.hdr, sizeof(_args->result));
+
+        if (!ret) memcpy(&hret, &_args->result.value, sizeof(hret));
+        kfree(_args);
+    }
+
+    if (ret || hret) {
+        debug("could not accept connection on host\n");
+        ret = ret ? ret : hret;
+    }
+
+    kfree(vconn_param);
+fail:
     return ret;
 }
 

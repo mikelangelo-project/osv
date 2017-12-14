@@ -409,7 +409,8 @@ int rdma_create_id(struct rdma_event_channel *channel,
 
 	return 0;
 
-err:	ucma_free_id(id_priv);
+err:
+	ucma_free_id(id_priv);
 	return ret;
 }
 
@@ -518,19 +519,12 @@ static int ucma_query_route(struct rdma_cm_id *id)
 
 int rdma_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr)
 {
-	struct ucma_abi_bind_addr *cmd;
 	struct cma_id_private *id_priv;
-	void *msg;
-	int ret, size, addrlen;
+	int ret, addrlen;
 
 	addrlen = ucma_addrlen(addr);
 	if (!addrlen)
 		return ERR(EINVAL);
-
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_BIND_ADDR, ucma_abi_bind_addr, size);
-	id_priv = container_of(id, struct cma_id_private, id);
-	cmd->id = id_priv->handle;
-	memcpy(&cmd->addr, addr, addrlen);
 
 	ret = rdma_drv->vrdmacm_bind_addr(id, addr);
 
@@ -828,34 +822,17 @@ static void ucma_copy_conn_param_to_kern(struct ucma_abi_conn_param *dst,
 
 int rdma_connect(struct rdma_cm_id *id, struct rdma_conn_param *conn_param)
 {
-	struct ucma_abi_connect *cmd;
 	struct cma_id_private *id_priv;
-	void *msg;
-	int ret, size;
+	int ret;
 
-	printf("==== rdma_connect ====\n");
-	
 	id_priv = container_of(id, struct cma_id_private, id);
 	ret = ucma_valid_param(id_priv, conn_param);
 	if (ret)
 		return ret;
 
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_CONNECT, ucma_abi_connect, size);
-	cmd->id = id_priv->handle;
-	if (id->qp)
-		ucma_copy_conn_param_to_kern(&cmd->conn_param, conn_param,
-					     id->qp->qp_num,
-					     (id->qp->srq != NULL));
-	else
-		ucma_copy_conn_param_to_kern(&cmd->conn_param, conn_param,
-					     conn_param->qp_num,
-					     conn_param->srq);
+	ret = rdma_drv->vrdmacm_connect(id, conn_param);
 
-	ret = write(id->channel->fd, msg, size);
-	if (ret != size)
-		return (ret >= 0) ? ERR(ECONNREFUSED) : -1;
-
-	return 0;
+	return ret;
 }
 
 int rdma_listen(struct rdma_cm_id *id, int backlog)
@@ -880,12 +857,8 @@ int rdma_listen(struct rdma_cm_id *id, int backlog)
 
 int rdma_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_param)
 {
-	struct ucma_abi_accept *cmd;
 	struct cma_id_private *id_priv;
-	void *msg;
-	int ret, size;
-
-	printf("==== rdma_accept ====\n");
+	int ret;
 
 	id_priv = container_of(id, struct cma_id_private, id);
 	ret = ucma_valid_param(id_priv, conn_param);
@@ -898,25 +871,9 @@ int rdma_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_param)
 			return ret;
 	}
 
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_ACCEPT, ucma_abi_accept, size);
-	cmd->id = id_priv->handle;
-	cmd->uid = (uintptr_t) id_priv;
-	if (id->qp)
-		ucma_copy_conn_param_to_kern(&cmd->conn_param, conn_param,
-					     id->qp->qp_num,
-					     (id->qp->srq != NULL));
-	else
-		ucma_copy_conn_param_to_kern(&cmd->conn_param, conn_param,
-					     conn_param->qp_num,
-					     conn_param->srq);
+	ret = rdma_drv->vrdmacm_accept(id, conn_param);
 
-	ret = write(id->channel->fd, msg, size);
-	if (ret != size) {
-		ucma_modify_qp_err(id);
-		return (ret >= 0) ? ERR(ECONNREFUSED) : -1;
-	}
-
-	return 0;
+	return ret;
 }
 
 int rdma_reject(struct rdma_cm_id *id, const void *private_data,
@@ -928,7 +885,7 @@ int rdma_reject(struct rdma_cm_id *id, const void *private_data,
 	int ret, size;
 
 	printf("==== rdma_reject ====\n");
-	
+
 	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_REJECT, ucma_abi_reject, size);
 
 	id_priv = container_of(id, struct cma_id_private, id);
@@ -1315,9 +1272,7 @@ retry:
 		// else
 		// 	ucma_copy_conn_event(evt, &resp->param.conn);
 
-		printf("=== rdma_get_cm_event === 2\n");
 		ret = ucma_process_conn_req(evt, 0);
-		printf("=== rdma_get_cm_event === evt->event.id->verbs: %p\n", evt->event.id->verbs);
 		if (ret)
 			goto retry;
 		break;
