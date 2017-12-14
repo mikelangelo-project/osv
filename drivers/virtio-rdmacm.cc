@@ -403,7 +403,7 @@ fail:
 }
 
 
-int rdma::vrdmacm_init_qp_attr(struct rdma_cm_id *id, struct ibv_qp_attr *qp_attr,int *qp_attr_mask)
+int rdma::vrdmacm_init_qp_attr(struct rdma_cm_id *id, struct ibv_qp_attr *qp_attr, int *qp_attr_mask)
 {
     struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
     struct ib_qp_attr *kqp_attr;
@@ -441,6 +441,9 @@ int rdma::vrdmacm_init_qp_attr(struct rdma_cm_id *id, struct ibv_qp_attr *qp_att
         debug("could not init qp attr on host\n");
         ret = ret ? ret : hret;
     }
+
+    memcpy(qp_attr, kqp_attr, sizeof(*kqp_attr));
+    memcpy(qp_attr_mask, kqp_attr_mask, sizeof(*kqp_attr_mask));
 
     return ret;
 }
