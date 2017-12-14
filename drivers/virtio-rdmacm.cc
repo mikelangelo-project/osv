@@ -585,6 +585,45 @@ fail:
 }
 
 
+void rdma::vrdmacm_destroy_id(struct rdma_cm_id *id)
+{
+    struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
+    int ret, hret;
+
+    debug("vRDMA: vrdmacm_destroy_id\n");
+
+    {
+        const struct hcall_parg pargs[] = { };
+
+        struct _args_t {
+            struct vrdmacm_destroy_id_copy_args copy_args;
+            struct vrdmacm_destroy_id_result result;
+        } *_args;
+
+        _args = (_args_t *) kmalloc(sizeof(*_args), GFP_KERNEL);
+        if (!_args) { ret = -ENOMEM; }
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_RDMACM_DESTROY_ID, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+        memcpy(&_args->copy_args.ctx_handle, &priv_id->host_handle, sizeof(priv_id->host_handle));
+
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args), pargs,
+                            sizeof(pargs) / sizeof((pargs)[0]), &_args->result.hdr, sizeof(_args->result));
+
+        if (!ret) memcpy(&hret, &_args->result.value, sizeof(hret));
+
+        kfree(_args);
+    }
+    if (ret || hret) {
+        debug("could not destroy id on host\n");
+    }
+
+    if(priv_id->conn_done){
+        debug("free priv_id: %p\n", priv_id);
+        kfree(priv_id);
+    }
+}
+
+
 int rdma::vrdmacm_get_cm_event(int fd, struct rdma_cm_event *event)
 {
     int hcall_result;

@@ -436,19 +436,10 @@ static int ucma_destroy_kern_id(int fd, uint32_t handle)
 int rdma_destroy_id(struct rdma_cm_id *id)
 {
 	struct cma_id_private *id_priv;
-	int ret;
 
-	printf("==== rdma_destroy_id ====\n");
+	rdma_drv->vrdmacm_destroy_id(id);
 
 	id_priv = container_of(id, struct cma_id_private, id);
-	ret = ucma_destroy_kern_id(id->channel->fd, id_priv->handle);
-	if (ret < 0)
-		return ret;
-
-	pthread_mutex_lock(&id_priv->mut);
-	while (id_priv->events_completed < ret)
-		pthread_cond_wait(&id_priv->cond, &id_priv->mut);
-	pthread_mutex_unlock(&id_priv->mut);
 
 	ucma_free_id(id_priv);
 	return 0;
@@ -472,10 +463,8 @@ static int ucma_addrlen(struct sockaddr *addr)
 static int ucma_query_route(struct rdma_cm_id *id)
 {
 	struct ucma_abi_query_route_resp *resp;
-	struct ucma_abi_query_route *cmd;
 	struct cma_id_private *id_priv;
-	void *msg;
-	int ret, size, i;
+	int ret, i;
 
 	resp = (ucma_abi_query_route_resp *) alloca(sizeof(*resp));
 	id_priv = container_of(id, struct cma_id_private, id);
@@ -534,10 +523,8 @@ int rdma_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr)
 int rdma_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
 		      struct sockaddr *dst_addr, int timeout_ms)
 {
-	struct ucma_abi_resolve_addr *cmd;
 	struct cma_id_private *id_priv;
-	void *msg;
-	int ret, size, daddrlen;
+	int ret, daddrlen;
 
 	ret = rdma_drv->vrdmacm_resolve_addr(id, src_addr, dst_addr, timeout_ms);
 
@@ -1094,10 +1081,10 @@ int rdma_ack_cm_event(struct rdma_cm_event *event)
 
 	evt = container_of(event, struct cma_event, event);
 
-	if (evt->mc)
-		ucma_complete_mc_event(evt->mc);
-	else
-		ucma_complete_event(evt->id_priv);
+	// if (evt->mc)
+	// 	ucma_complete_mc_event(evt->mc);
+	// else
+	// 	ucma_complete_event(evt->id_priv);
 	free(evt);
 	return 0;
 }
@@ -1227,8 +1214,7 @@ int rdma_get_cm_event(struct rdma_event_channel *channel,
 {
 	struct ucma_abi_event_resp *resp;
 	struct cma_event *evt;
-	void *msg;
-	int ret, size;
+	int ret;
 
 	ret = cma_dev_cnt ? 0 : ucma_init();
 	if (ret)

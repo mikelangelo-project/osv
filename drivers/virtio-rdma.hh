@@ -761,6 +761,15 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         __s32 value;
     };
 
+    struct vrdmacm_destroy_id_copy_args {
+        struct hcall_header hdr;
+        __u32 ctx_handle;
+    };
+
+    struct vrdmacm_destroy_id_result {
+        struct hcall_ret_header hdr;
+        __s32 value;
+    };
 
     int do_hcall_async(struct hcall_queue *hvq,
                        struct hcall_async *async,
@@ -792,6 +801,7 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     int vrdmacm_init_qp_attr(struct rdma_cm_id *id, struct ibv_qp_attr *qp_attr,int *qp_attr_mask);
     int vrdmacm_connect(struct rdma_cm_id *id, struct rdma_conn_param *conn_param);
     int vrdmacm_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_param);
+    void vrdmacm_destroy_id(struct rdma_cm_id *id);
 
 private:
     void handle_event();
