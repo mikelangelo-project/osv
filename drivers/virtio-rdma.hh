@@ -618,15 +618,6 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
 
 #define RDMACM_MAX_PRIVATE_DATA 256
 
-    struct vrdmacm_id_priv
-    {
-        bool conn_done;
-        uint32_t host_handle;
-        struct ib_device *device;
-        struct rdma_cm_id id;
-        struct rdma_cm_id listen_id;
-    };
-
     struct vrdmacm_ud_param
     {
         __u8 private_data[RDMACM_MAX_PRIVATE_DATA];
@@ -653,6 +644,7 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
 
     struct vrdmacm_event
     {
+        __u64 uid;
         __u32 event;
         __s32 status;
         union
@@ -662,6 +654,17 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         } param;
         __be64 node_guid;
         struct rdma_route route;
+    };
+
+    struct vrdmacm_id_priv
+    {
+        uint32_t conn_done;
+        uint32_t host_handle;
+        struct ib_device *device;
+        struct rdma_cm_id id;
+        struct rdma_cm_id listen_id;
+        // transfer event between post_event_cb and rdma_cm_get_event
+        struct vrdmacm_event vevent;
     };
 
     struct vrdmacm_post_event_copy_args {
@@ -679,6 +682,7 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         __u64 guest_handle;
         __u32 port_space;
         __u32 qp_type;
+        __u64 uid;
     };
 
     struct vrdmacm_create_id_result {
@@ -789,19 +793,20 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     void copy_virt_event_to_rdmacm(const struct vrdmacm_event *vevent, struct rdma_cm_event *event);
     void copy_rdmacm_event_to_virt(const struct rdma_cm_event *event, vrdmacm_event *vevent);
     int post_event(struct vrdmacm_id_priv *priv_id);
-    int vrdmacm_create_id(struct rdma_event_channel *channel, void *context, enum rdma_port_space ps);
+    int vrdmacm_create_id(struct rdma_event_channel *channel, void *context, uint64_t uid, enum rdma_port_space ps);
     int vrdmacm_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr);
     struct ib_device* rdmacm_get_ibdev(__be64 node_guid);
     struct vrdmacm_id_priv* rdmacm_id_to_priv(struct rdma_cm_id *id);
     int vrdmacm_query_route(struct rdma_cm_id *id, struct ucma_abi_query_route_resp *);
     int vrdmacm_listen(struct rdma_cm_id *id, int backlog);
-    int vrdmacm_get_cm_event(int fd, struct rdma_cm_event *event);
+    int vrdmacm_get_cm_event(int fd, struct ucma_abi_event_resp *resp);
     int vrdmacm_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
                              struct sockaddr *dst_addr, int timeout_ms);
     int vrdmacm_init_qp_attr(struct rdma_cm_id *id, struct ibv_qp_attr *qp_attr,int *qp_attr_mask);
     int vrdmacm_connect(struct rdma_cm_id *id, struct rdma_conn_param *conn_param);
     int vrdmacm_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_param);
     void vrdmacm_destroy_id(struct rdma_cm_id *id);
+    void vrdmacm_post_event_cb();
 
 private:
     void handle_event();

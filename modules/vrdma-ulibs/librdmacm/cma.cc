@@ -400,7 +400,7 @@ int rdma_create_id(struct rdma_event_channel *channel,
 	if (!id_priv)
 		return ERR(ENOMEM);
 
-	ret = rdma_drv->vrdmacm_create_id(channel, context, ps);
+	ret = rdma_drv->vrdmacm_create_id(channel, context, (uintptr_t) id_priv, ps);
 	if (ret < 0)
 		goto err;
 
@@ -442,6 +442,7 @@ int rdma_destroy_id(struct rdma_cm_id *id)
 	id_priv = container_of(id, struct cma_id_private, id);
 
 	ucma_free_id(id_priv);
+
 	return 0;
 }
 
@@ -474,8 +475,7 @@ static int ucma_query_route(struct rdma_cm_id *id)
 		return -1;
 
 	if (resp->num_paths) {
-		id->route.path_rec = (ibv_sa_path_rec *) malloc(sizeof *id->route.path_rec *
-					    resp->num_paths);
+		id->route.path_rec = (ibv_sa_path_rec *) malloc(sizeof *id->route.path_rec * resp->num_paths);
 		if (!id->route.path_rec)
 			return ERR(ENOMEM);
 
@@ -812,6 +812,7 @@ int rdma_connect(struct rdma_cm_id *id, struct rdma_conn_param *conn_param)
 	struct cma_id_private *id_priv;
 	int ret;
 
+	printf("==== rdma_connect ====\n");
 	id_priv = container_of(id, struct cma_id_private, id);
 	ret = ucma_valid_param(id_priv, conn_param);
 	if (ret)
@@ -847,6 +848,7 @@ int rdma_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_param)
 	struct cma_id_private *id_priv;
 	int ret;
 
+	printf("==== rdma_accept ====\n");
 	id_priv = container_of(id, struct cma_id_private, id);
 	ret = ucma_valid_param(id_priv, conn_param);
 	if (ret)
@@ -1227,20 +1229,23 @@ int rdma_get_cm_event(struct rdma_event_channel *channel,
 	if (!evt)
 		return ERR(ENOMEM);
 
+	resp = (struct ucma_abi_event_resp *) alloca(sizeof(*resp));
+	if (!resp)
+		return ERR(ENOMEM);
+
 retry:
-	*event = (rdma_cm_event *) malloc(sizeof(**event));
 	memset(evt, 0, sizeof *evt);
-	ret = rdma_drv->vrdmacm_get_cm_event(channel->fd, *event);
+	ret = rdma_drv->vrdmacm_get_cm_event(channel->fd, resp);
 	if (ret != 0) {
 		return (ret >= 0) ? ERR(ECONNREFUSED) : -1;
 	}
 
-	evt->event.event = (*event)->event;
-	//evt->id_priv = (void *) (uintptr_t) resp.uid;
-	evt->event.id = (*event)->id;
-	evt->event.status = (*event)->status;
+	evt->event.event = (rdma_cm_event_type) resp->event;
+	evt->id_priv = (cma_id_private *) (uintptr_t) resp->uid;
+	evt->event.id = &evt->id_priv->id;
+	evt->event.status = resp->status;
 
-	switch ((*event)->event) {
+	switch (resp->event) {
 	case RDMA_CM_EVENT_ADDR_RESOLVED:
 		evt->event.status = ucma_query_route(&evt->id_priv->id);
 		if (evt->event.status)
@@ -1252,18 +1257,18 @@ retry:
 			evt->event.event = RDMA_CM_EVENT_ROUTE_ERROR;
 		break;
 	case RDMA_CM_EVENT_CONNECT_REQUEST:
-		// evt->id_priv = (cma_id_private *) (uintptr_t) resp->uid;
-		// if (ucma_is_ud_ps(evt->id_priv->id.ps))
-		// 	ucma_copy_ud_event(evt, &resp->param.ud);
-		// else
-		// 	ucma_copy_conn_event(evt, &resp->param.conn);
+		evt->id_priv = (cma_id_private *) (uintptr_t) resp->uid;
+		if (ucma_is_ud_ps(evt->id_priv->id.ps))
+			ucma_copy_ud_event(evt, &resp->param.ud);
+		else
+			ucma_copy_conn_event(evt, &resp->param.conn);
 
-		ret = ucma_process_conn_req(evt, 0);
+		ret = ucma_process_conn_req(evt, resp->id);
 		if (ret)
 			goto retry;
 		break;
 	case RDMA_CM_EVENT_CONNECT_RESPONSE:
-		// ucma_copy_conn_event(evt, &resp->param.conn);
+		ucma_copy_conn_event(evt, &resp->param.conn);
 		evt->event.status = ucma_process_conn_resp(evt->id_priv);
 		if (!evt->event.status)
 			evt->event.event = RDMA_CM_EVENT_ESTABLISHED;
@@ -1273,12 +1278,12 @@ retry:
 		}
 		break;
 	case RDMA_CM_EVENT_ESTABLISHED:
-		// if (ucma_is_ud_ps(evt->id_priv->id.ps)) {
-		// 	ucma_copy_ud_event(evt, &resp->param.ud);
-		// 	break;
-		// }
+		if (ucma_is_ud_ps(evt->id_priv->id.ps)) {
+			ucma_copy_ud_event(evt, &resp->param.ud);
+			break;
+		}
 
-		// ucma_copy_conn_event(evt, &resp->param.conn);
+		ucma_copy_conn_event(evt, &resp->param.conn);
 		evt->event.status = ucma_process_establish(&evt->id_priv->id);
 		if (evt->event.status) {
 			evt->event.event = RDMA_CM_EVENT_CONNECT_ERROR;
@@ -1290,7 +1295,7 @@ retry:
 			ucma_complete_event(evt->id_priv);
 			goto retry;
 		}
-		// ucma_copy_conn_event(evt, &resp->param.conn);
+		ucma_copy_conn_event(evt, &resp->param.conn);
 		ucma_modify_qp_err(evt->event.id);
 		break;
 	case RDMA_CM_EVENT_DISCONNECTED:
@@ -1329,6 +1334,7 @@ retry:
 
 	*event = &evt->event;
 	return 0;
+
 }
 
 const char *rdma_event_str(enum rdma_cm_event_type event)

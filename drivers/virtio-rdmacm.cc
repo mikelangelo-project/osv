@@ -120,7 +120,7 @@ fail:
     return ret;
 }
 
-int rdma::vrdmacm_create_id(struct rdma_event_channel *channel, void *context, enum rdma_port_space ps)
+int rdma::vrdmacm_create_id(struct rdma_event_channel *channel, void *context, uint64_t uid, enum rdma_port_space ps)
 {
     struct vrdmacm_id_priv *priv_id;
     int ret, hret;
@@ -154,7 +154,7 @@ int rdma::vrdmacm_create_id(struct rdma_event_channel *channel, void *context, e
 //    priv_id->id.event_handler = event_handler;
     priv_id->id.ps = ps;
     priv_id->id.qp_type = (enum ibv_qp_type) qp_type;
-    priv_id->conn_done = false;
+    priv_id->conn_done = 0;
 
     {
         const struct hcall_parg pargs[] = { };
@@ -170,7 +170,8 @@ int rdma::vrdmacm_create_id(struct rdma_event_channel *channel, void *context, e
 
         memcpy(&_args->copy_args.guest_handle, &priv_id, sizeof(priv_id));
         memcpy(&_args->copy_args.port_space, &ps, sizeof(ps));
-        memcpy(&_args->copy_args.qp_type, &qp_type, sizeof(qp_type));;
+        memcpy(&_args->copy_args.qp_type, &qp_type, sizeof(qp_type));
+        memcpy(&_args->copy_args.uid, &uid, sizeof(uid));
 
         ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args),
                                 pargs, (sizeof(pargs) / sizeof((pargs)[0])),
@@ -624,39 +625,22 @@ void rdma::vrdmacm_destroy_id(struct rdma_cm_id *id)
 }
 
 
-int rdma::vrdmacm_get_cm_event(int fd, struct rdma_cm_event *event)
+void rdma::vrdmacm_post_event_cb()
 {
     int hcall_result;
     vrdmacm_id_priv * priv_id;
     struct vrdmacm_event *vevent;
 
-    debug("vRDMA: vrdmacm_get_cm_event\n");
-
-    pthread_mutex_lock(&_hcall_queue.lock);
-    while(true) {
-        pthread_cond_wait(&_hcall_queue.cond, &_hcall_queue.lock);
-
-        // check if there is an event and if it's in our channel
-        if (_hcall_queue.hcall_acked && fd == _hcall_queue.channel_fd) {
-            break;
-        }
-    }
-
     priv_id = (struct vrdmacm_id_priv *) &_hcall_queue.async->data;
     hcall_result = _hcall_queue.async->hret->value;
     vevent = (vrdmacm_event * ) _hcall_queue.async->pargs[0].ptr;
-    _hcall_queue.hcall_acked = false;
-    pthread_mutex_unlock(&_hcall_queue.lock);
+
+    priv_id->vevent = *vevent;
 
     // now process the event
     {
         debug("priv_id = 0x%p, event = { .event = %d, .status = %d }\n",
               priv_id, vevent->event, vevent->status);
-
-        // we don't need the the whole rdma_cm id from the host,
-        // but we have to retrieve the address infomation of the endpoints
-        priv_id->id.route.addr = vevent->route.addr;
-
         switch(vevent->event) {
         case RDMA_CM_EVENT_CONNECT_REQUEST:
         case RDMA_CM_EVENT_ADDR_RESOLVED:
@@ -685,12 +669,6 @@ int rdma::vrdmacm_get_cm_event(int fd, struct rdma_cm_event *event)
             debug("Unknown event: %d!\n", vevent->event);
             goto fail;
         }
-
-        // TODO: add support for UD
-        copy_virt_event_to_rdmacm(vevent, event);
-        event->id = &priv_id->id;
-        event->listen_id = &priv_id->listen_id;
-
         /* TODO: handle destroy of cm */
         if (hcall_result) {
             debug("hypercall failed on host (%d)\n", hcall_result);
@@ -698,10 +676,37 @@ int rdma::vrdmacm_get_cm_event(int fd, struct rdma_cm_event *event)
         }
     }
 
-    return hcall_result;
 fail:
     kfree(vevent);
-    return hcall_result;
+}
+
+
+int rdma::vrdmacm_get_cm_event(int fd, struct ucma_abi_event_resp *resp)
+{
+    vrdmacm_id_priv * priv_id;
+
+    debug("vRDMA: vrdmacm_get_cm_event\n");
+
+    pthread_mutex_lock(&_hcall_queue.lock);
+    while(true) {
+        pthread_cond_wait(&_hcall_queue.cond, &_hcall_queue.lock);
+        // check if there is an event and if it's in our channel
+        if (_hcall_queue.hcall_acked && fd == _hcall_queue.channel_fd) {
+            break;
+        }
+    }
+
+    priv_id = (struct vrdmacm_id_priv *) &_hcall_queue.async->data;
+    _hcall_queue.hcall_acked = false;
+    pthread_mutex_unlock(&_hcall_queue.lock);
+
+    resp->uid = priv_id->vevent.uid;
+    resp->event = priv_id->vevent.event;
+    resp->status = priv_id->vevent.status;
+    // TODO: add support for UD
+    copy_virt_conn_param_to_rdmacm(&priv_id->vevent.param.conn, (rdma_conn_param*) &resp->param.conn);
+
+    return 0;
 }
 
 }

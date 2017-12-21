@@ -344,6 +344,7 @@ void rdma::handle_hcall()
         if (hcall_p->is_async) {
             debug("vRDMA: async hcall.\n");
             _hcall_queue.async = container_of(hcall_p, struct hcall_async, base);
+            vrdmacm_post_event_cb();
         } else {
             debug("vRDMA: sync hcall.\n");
         }
