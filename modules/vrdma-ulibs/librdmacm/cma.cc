@@ -534,21 +534,11 @@ int rdma_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
 
 int rdma_resolve_route(struct rdma_cm_id *id, int timeout_ms)
 {
-	struct ucma_abi_resolve_route *cmd;
 	struct cma_id_private *id_priv;
-	void *msg;
-	int ret, size;
+	int ret;
 
 	printf("==== rdma_resolve_route ====\n");
-
-	CMA_CREATE_MSG_CMD(msg, cmd, UCMA_CMD_RESOLVE_ROUTE, ucma_abi_resolve_route, size);
-	id_priv = container_of(id, struct cma_id_private, id);
-	cmd->id = id_priv->handle;
-	cmd->timeout_ms = timeout_ms;
-
-	ret = write(id->channel->fd, msg, size);
-	if (ret != size)
-		return (ret >= 0) ? ERR(ECONNREFUSED) : -1;
+	ret = rdma_drv->vrdmacm_resolve_route(id, timeout_ms);
 
 	return 0;
 }

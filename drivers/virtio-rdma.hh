@@ -775,6 +775,18 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
         __s32 value;
     };
 
+    struct vrdmacm_resolve_route_copy_args {
+        struct hcall_header hdr;
+        __u32 ctx_handle;
+        __s32 timeout_ms;
+    };
+
+    struct vrdmacm_resolve_route_result {
+        struct hcall_ret_header hdr;
+        __s32 value;
+    };
+
+
     int do_hcall_async(struct hcall_queue *hvq,
                        struct hcall_async *async,
                        const struct hcall_header *hdr, uint32_t copy_size,
@@ -802,6 +814,7 @@ typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
     int vrdmacm_get_cm_event(int fd, struct ucma_abi_event_resp *resp);
     int vrdmacm_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
                              struct sockaddr *dst_addr, int timeout_ms);
+    int vrdmacm_resolve_route(struct rdma_cm_id *id, int timeout_ms);
     int vrdmacm_init_qp_attr(struct rdma_cm_id *id, struct ibv_qp_attr *qp_attr,int *qp_attr_mask);
     int vrdmacm_connect(struct rdma_cm_id *id, struct rdma_conn_param *conn_param);
     int vrdmacm_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_param);

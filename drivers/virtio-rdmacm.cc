@@ -304,6 +304,7 @@ int rdma::vrdmacm_query_route(struct rdma_cm_id *id, struct ucma_abi_query_route
         ret = ret ? ret : hret;
     }
 
+    debug("vRDMA: vrdmacm_query_route done\n");
     memcpy(resp, kresp, sizeof(*resp));
 
     return ret;
@@ -400,7 +401,7 @@ int rdma::vrdmacm_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
         kfree(_args);
     }
     if (ret || hret) {
-        debug("could not resolve addr on host\n");
+        debug("could not resolve addr on host ret:%d, hret:%d\n", ret, hret);
         ret = ret ? ret : hret;
     }
     kfree(addr);
@@ -408,6 +409,46 @@ int rdma::vrdmacm_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
     post_event(priv_id);
 
 fail:
+    return ret;
+}
+
+
+int rdma::vrdmacm_resolve_route(struct rdma_cm_id *id, int timeout_ms)
+{
+    struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
+    int ret, hret;
+
+    debug("vRDMA: vrdmacm_resolve_route\n");
+
+    {
+        const struct hcall_parg pargs[] = { };
+        struct _args_t {
+            struct vrdmacm_resolve_route_copy_args copy_args;
+            struct vrdmacm_resolve_route_result result;
+        } *_args;
+
+        _args = (_args_t *) kmalloc(sizeof(*_args), GFP_KERNEL);
+        if (!_args) { return -ENOMEM; }
+
+        _args->copy_args.hdr = (struct hcall_header) { VIRTIO_RDMACM_RESOLVE_ROUTE, 0, HCALL_NOTIFY_HOST | HCALL_SIGNAL_GUEST };
+
+        memcpy(&_args->copy_args.ctx_handle, &priv_id->host_handle, sizeof(priv_id->host_handle));
+        memcpy(&_args->copy_args.timeout_ms, &timeout_ms, sizeof(timeout_ms));
+
+        ret = do_hcall_sync(hyv_dev.vg->vq_hcall, &_args->copy_args.hdr, sizeof(_args->copy_args), pargs,
+                                sizeof(pargs) / sizeof((pargs)[0]), &_args->result.hdr, sizeof(_args->result));
+
+        if (!ret)
+            memcpy(&hret, &_args->result.value, sizeof(hret));
+        kfree(_args);
+    }
+    if (ret || hret) {
+        debug("could not resolve route on host\n");
+        ret = ret ? ret : hret;
+    }
+
+    post_event(priv_id);
+
     return ret;
 }
 
@@ -630,6 +671,8 @@ void rdma::vrdmacm_post_event_cb()
     int hcall_result;
     vrdmacm_id_priv * priv_id;
     struct vrdmacm_event *vevent;
+
+    debug("vRDMA: vrdmacm_post_event_cb\n");
 
     priv_id = (struct vrdmacm_id_priv *) &_hcall_queue.async->data;
     hcall_result = _hcall_queue.async->hret->value;
