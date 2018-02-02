@@ -328,8 +328,6 @@ int mlx4_poll_cq(struct ibv_cq *ibcq, int ne, struct ibv_wc *wc)
 	int npolled;
 	int err = CQ_OK;
 
-	pthread_spin_lock(&cq->lock);
-
 	for (npolled = 0; npolled < ne; ++npolled) {
 		err = mlx4_poll_one(cq, &qp, wc + npolled);
 		if (err != CQ_OK)
@@ -338,8 +336,6 @@ int mlx4_poll_cq(struct ibv_cq *ibcq, int ne, struct ibv_wc *wc)
 
 	if (npolled || err == CQ_POLL_ERR)
 		update_cons_index(cq);
-
-	pthread_spin_unlock(&cq->lock);
 
 	return err == CQ_POLL_ERR ? err : npolled;
 }
