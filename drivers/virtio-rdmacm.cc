@@ -73,8 +73,6 @@ int rdma::post_event(struct vrdmacm_id_priv *priv_id)
     int ret;
     vrdmacm_event *event;
 
-    debug("vRDMA: post_event\n");
-
     /* we might be in interrupt context */
     event = (vrdmacm_event *) kmalloc(sizeof(*event), GFP_ATOMIC);
     if (!event) {
@@ -106,7 +104,6 @@ int rdma::post_event(struct vrdmacm_id_priv *priv_id)
 
         ret = do_hcall_async(hyv_dev.vg->vq_hcall, &_args->async, &_args->copy_args.hdr,
                                   sizeof(_args->copy_args), i, sizeof(_args->result));
-        return ret;
     }
     if (ret) {
         debug("post event hypercall failed: %d!\n", ret);
@@ -125,8 +122,6 @@ int rdma::vrdmacm_create_id(struct rdma_event_channel *channel, void *context, u
     struct vrdmacm_id_priv *priv_id;
     int ret, hret;
     enum ib_qp_type qp_type;
-
-    debug("vRDMA: vrdmacm_create_id\n");
 
     switch (ps) {
     case RDMA_PS_TCP:
@@ -221,8 +216,6 @@ int rdma::vrdmacm_bind_addr(struct rdma_cm_id *id, struct sockaddr *addr)
     __be64 *node_guid;
     struct sockaddr *src_addr;
 
-    debug("vRDMA: vrdmacm_bind_addr\n");
-
     node_guid = (__be64 *) kmalloc(sizeof(*node_guid), GFP_KERNEL);
     src_addr = (struct sockaddr *) kmalloc(sizeof(*src_addr), GFP_KERNEL);
     memcpy(src_addr, addr, sizeof(*src_addr));
@@ -271,8 +264,6 @@ int rdma::vrdmacm_query_route(struct rdma_cm_id *id, struct ucma_abi_query_route
     int ret, hret;
     struct ucma_abi_query_route_resp *kresp;
 
-    debug("vRDMA: vrdmacm_query_route\n");
-
     kresp = (struct ucma_abi_query_route_resp *) kmalloc(sizeof(*kresp), GFP_KERNEL);
 
     memset(kresp, 0, sizeof(*kresp));
@@ -304,7 +295,6 @@ int rdma::vrdmacm_query_route(struct rdma_cm_id *id, struct ucma_abi_query_route
         ret = ret ? ret : hret;
     }
 
-    debug("vRDMA: vrdmacm_query_route done\n");
     memcpy(resp, kresp, sizeof(*resp));
 
     return ret;
@@ -314,8 +304,6 @@ int rdma::vrdmacm_listen(struct rdma_cm_id *id, int backlog)
 {
     struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
     int ret, hret;
-
-    debug("vRDMA: vrdmacm_listen\n");
 
     {
         const struct hcall_parg pargs[] = { };
@@ -356,8 +344,6 @@ int rdma::vrdmacm_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
     int ret, hret;
     uint32_t addr_size;
     struct sockaddr *addr;
-
-    debug("vRDMA: vrdmacm_resolve_addr\n");
 
     addr = (sockaddr*) kmalloc(sizeof(*addr) * 2, GFP_KERNEL);
     if (!addr) {
@@ -407,7 +393,6 @@ int rdma::vrdmacm_resolve_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
     kfree(addr);
 
     post_event(priv_id);
-
 fail:
     return ret;
 }
@@ -417,8 +402,6 @@ int rdma::vrdmacm_resolve_route(struct rdma_cm_id *id, int timeout_ms)
 {
     struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
     int ret, hret;
-
-    debug("vRDMA: vrdmacm_resolve_route\n");
 
     {
         const struct hcall_parg pargs[] = { };
@@ -458,8 +441,6 @@ int rdma::vrdmacm_init_qp_attr(struct rdma_cm_id *id, struct ibv_qp_attr *qp_att
     struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
     struct ib_qp_attr *kqp_attr;
     int ret, hret, *kqp_attr_mask;
-
-    debug("vRDMA: vrdmacm_init_qp_attr\n");
 
     kqp_attr = (ib_qp_attr *) kmalloc(sizeof(*kqp_attr), GFP_KERNEL);
     if (!kqp_attr) {
@@ -519,8 +500,6 @@ int rdma::vrdmacm_connect(struct rdma_cm_id *id, struct rdma_conn_param *conn_pa
     vrdmacm_conn_param *vconn_param;
     int ret, hret;
 
-    debug("vRDMA: vrdmacm_connect\n");
-
     vconn_param = (struct vrdmacm_conn_param *) kmalloc(sizeof(*vconn_param), GFP_KERNEL);
     if (!vconn_param) {
         debug("could not allocate conn param\n");
@@ -576,8 +555,6 @@ int rdma::vrdmacm_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_par
     int ret, hret;
     vrdmacm_conn_param *vconn_param;
 
-    debug("vRDMA: vrdmacm_accept\n");
-
     vconn_param = (struct vrdmacm_conn_param *) kmalloc(sizeof(*vconn_param), GFP_KERNEL);
     if (!vconn_param) {
         debug("could not allocate conn param\n");
@@ -632,8 +609,6 @@ void rdma::vrdmacm_destroy_id(struct rdma_cm_id *id)
     struct vrdmacm_id_priv *priv_id = rdmacm_id_to_priv(id);
     int ret, hret;
 
-    debug("vRDMA: vrdmacm_destroy_id\n");
-
     {
         const struct hcall_parg pargs[] = { };
 
@@ -672,8 +647,6 @@ void rdma::vrdmacm_post_event_cb()
     vrdmacm_id_priv * priv_id;
     struct vrdmacm_event *vevent;
 
-    debug("vRDMA: vrdmacm_post_event_cb\n");
-
     priv_id = (struct vrdmacm_id_priv *) &_hcall_queue.async->data;
     hcall_result = _hcall_queue.async->hret->value;
     vevent = (vrdmacm_event * ) _hcall_queue.async->pargs[0].ptr;
@@ -682,25 +655,18 @@ void rdma::vrdmacm_post_event_cb()
 
     // now process the event
     {
-        debug("priv_id = 0x%p, event = { .event = %d, .status = %d }\n",
-              priv_id, vevent->event, vevent->status);
         switch(vevent->event) {
         case RDMA_CM_EVENT_CONNECT_REQUEST:
         case RDMA_CM_EVENT_ADDR_RESOLVED:
         {
             struct ib_device *ibdev;
 
-            debug("rdma addr resolved/connect request => set device\n");
-
             ibdev = rdmacm_get_ibdev(vevent->node_guid);
             if (!ibdev) {
-                debug("device does not exists (%llx)\n",
-                      vevent->node_guid);
                 vevent->event = RDMA_CM_EVENT_ADDR_ERROR;
             } else {
                 priv_id->device = ibdev;
             }
-            debug("priv_id->id.device: %p\n", priv_id->device);
 
             break;
         }
@@ -709,12 +675,10 @@ void rdma::vrdmacm_post_event_cb()
         case RDMA_CM_EVENT_ESTABLISHED:
             break;
         default:
-            debug("Unknown event: %d!\n", vevent->event);
             goto fail;
         }
         /* TODO: handle destroy of cm */
         if (hcall_result) {
-            debug("hypercall failed on host (%d)\n", hcall_result);
             goto fail;
         }
     }
@@ -728,8 +692,6 @@ int rdma::vrdmacm_get_cm_event(int fd, struct ucma_abi_event_resp *resp)
 {
     vrdmacm_id_priv * priv_id;
 
-    debug("vRDMA: vrdmacm_get_cm_event\n");
-
     pthread_mutex_lock(&_hcall_queue.lock);
     while(true) {
         pthread_cond_wait(&_hcall_queue.cond, &_hcall_queue.lock);
@@ -740,7 +702,7 @@ int rdma::vrdmacm_get_cm_event(int fd, struct ucma_abi_event_resp *resp)
     }
 
     priv_id = (struct vrdmacm_id_priv *) &_hcall_queue.async->data;
-    _hcall_queue.hcall_acked = false;
+    _hcall_queue.hcall_acked = 0;
     pthread_mutex_unlock(&_hcall_queue.lock);
 
     resp->uid = priv_id->vevent.uid;

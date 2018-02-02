@@ -102,8 +102,6 @@ int rdma::register_ib_dev()
 {
     int ret, result;
 
-    debug("vRDMA: Register hyv device.\n");
-
     hyv_dev.vg = _vg;
     hyv_dev.host_handle = 0;
     //hyv_dev->dev.release = &hyv_release_dev;
@@ -166,8 +164,6 @@ struct rdma::hyv_udata* rdma::udata_create(struct ib_udata *ibudata)
     struct rdma::hyv_udata *udata;
     unsigned long inlen;
 
-    debug("vRDMA: udata_create\n");
-
     if(ibudata->inlen < sizeof(struct ib_uverbs_cmd_hdr)) {
         debug("vRDMA: udata size is not correct. \n");
         goto fail;
@@ -212,18 +208,15 @@ int rdma::udata_copy_out(hyv_udata *udata, struct ib_udata *ibudata)
 
 void rdma::ack_irq()
 {
-    debug("vRDMA: event irq handler.\n");
 }
 
 void rdma::handle_irq()
 {
-    debug("vRDMA: event irq handler.\n");
 }
 
 //virtio_hyv_event.c: virtio_hyv_ack_event
 void rdma::handle_event()
 {
-    debug("vRDMA: event ack handler.\n");
     auto *vq = _event_queue.vq;
     struct hyv_event event;
 
@@ -244,8 +237,6 @@ void rdma::handle_event()
                 case HYV_EVENT_CQ_COMP: {
                     struct hyv_cq *cq = (struct hyv_cq *)event.id;
 
-                    debug("vRDMA: handle_event: CQ_COMP\n");
-
                     if (cq->ibcq.comp_handler) {
                         cq->ibcq.comp_handler(&cq->ibcq,
                                       cq->ibcq.cq_context);
@@ -255,8 +246,6 @@ void rdma::handle_event()
                 case HYV_EVENT_CQ: {
                     struct ib_event ibevent;
                     struct hyv_cq *cq = (struct hyv_cq *)event.id;
-
-                    debug("vRDMA: handle_event: CQ\n");
 
                     ibevent.device = cq->ibcq.device;
                     ibevent.element.cq = &cq->ibcq;
@@ -271,8 +260,6 @@ void rdma::handle_event()
                     struct ib_event ibevent;
                     struct hyv_qp *qp = (struct hyv_qp *)event.id;
 
-                    debug("vRDMA: handle_event: QP\n");
-
                     ibevent.device = qp->ibqp.device;
                     ibevent.element.qp = &qp->ibqp;
                     ibevent.event = (ib_event_type) event.ibevent;
@@ -284,15 +271,12 @@ void rdma::handle_event()
                 }
                 case HYV_EVENT_SRQ:
                 case HYV_EVENT_ASYNC:
-                    debug("vRDMA: handle_event: SRQ/ASYNC\n");
                     break;
                 case HYV_EVENT_ADD_DEVICE: {
-                    debug("vRDMA: handle_event: HYV_EVENT_ADD_DEVICE\n");
                     register_ib_dev();
                     break;
                 }
                 case HYV_EVENT_REM_DEVICE: {
-                    debug("vRDMA: handle_event: rem device\n");
                     // this might not be necessary
                     // unregister_ib_dev();
                     break;
@@ -327,8 +311,6 @@ void rdma::handle_hcall()
 {
     vring *vq = _hcall_queue.vq;
 
-    debug("vRDMA: hcall ack handler.\n");
-
     while(1)
     {
         u32 len;
@@ -336,6 +318,7 @@ void rdma::handle_hcall()
         virtio_driver::wait_for_queue(vq, &vring::used_ring_not_empty);
 
         pthread_mutex_lock(&_hcall_queue.lock);
+        _hcall_queue.hcall_acked = 0;
 
         // we have only one element each time
         struct hcall * hcall_p = (struct hcall *) vq->get_buf_elem(&len);
@@ -346,11 +329,10 @@ void rdma::handle_hcall()
             _hcall_queue.async = container_of(hcall_p, struct hcall_async, base);
             vrdmacm_post_event_cb();
         } else {
-            debug("vRDMA: sync hcall.\n");
         }
 
-        _hcall_queue.hcall_acked = true;
-        pthread_cond_signal(&_hcall_queue.cond);
+        _hcall_queue.hcall_acked = 1;
+        pthread_cond_broadcast(&_hcall_queue.cond);
         pthread_mutex_unlock(&_hcall_queue.lock);
     }
 }
@@ -365,15 +347,12 @@ int rdma::do_hcall(struct hcall_queue *hvq, const struct hcall *hcall_p,
     int ret = 0;
     uint32_t flags = hdr->flags;
 
-    debug("vRDMA: do_hcall, npargs: %d\n", npargs);
-
     hvq->vq->init_sg();
     // add header
     hvq->vq->add_out_sg((void *)hdr, copy_size);
 
     // add parameter list
     for (i = 0; i < npargs; i++) {
-        debug("vRDMA: pargds[%d]: size: %d, addr: %p\n", i, pargs[i].size, pargs[i].ptr);
         hvq->vq->add_out_sg(pargs[i].ptr, pargs[i].size);
     }
 
@@ -448,8 +427,6 @@ struct rdma::hyv_mmap* rdma::mmap_prepare(void **addr, uint32_t size, uint32_t k
     struct hyv_mmap *gmm;
     int ret;
 
-    debug("mmap_prepare\n");
-
     gmm = (hyv_mmap*) kmalloc(sizeof(struct hyv_mmap), GFP_KERNEL);
     if (!gmm) {
         debug("could not allocate mmap struct\n");
@@ -495,10 +472,6 @@ int rdma::vrdma_mmap(struct hyv_mmap *gmm)
     uint32_t vm_pgoff = gmm->key >> PAGE_SHIFT;
     uint64_t vm_flags = 0xFA;
     hyv_mmap *mm;
-
-    debug("vrdma_mmap\n");
-
-    debug("pgoff: 0x%lx, key: 0x%x, len: %lu, vm_pgoff: %lu\n", vm_pgoff, gmm->key, gmm->size, vm_pgoff);
 
     // remove the mm from the mmap list
     spin_lock(&hyv_uctx->mmap_lock);
@@ -548,8 +521,6 @@ int rdma::vrdma_mmap(struct hyv_mmap *gmm)
         goto fail;
     }
 
-    debug("result.pgprot: %llu\n", result.pgprot);
-
     gmm->host_handle = result.mmap_handle;
     gmm->mapped = true;
 
@@ -560,8 +531,6 @@ fail:
 int rdma::vrdma_unmap(struct hyv_mmap *mm)
 {
     int ret = 0, result;
-
-    debug("vrdma_unmap\n");
 
     if (mm->mapped) {
         {
@@ -608,8 +577,6 @@ struct ib_ucontext* rdma::vrdma_alloc_ucontext(struct ib_udata *ibudata, void **
 
     struct virtmlx4_ucontext *vuctx;
     int ret, hret;
-
-    debug("vrdma_ibv_alloc_ucontext\n");
 
     BUG_ON(!udata);
 
@@ -870,8 +837,6 @@ struct ib_pd* rdma::vrdma_alloc_pd(struct ib_udata *ibudata)
         goto fail_alloc;
     }
 
-    debug("&hpd->ibpd : %p\n", &hpd->ibpd);
-
     return &hpd->ibpd;
 
 fail_udata:
@@ -903,10 +868,6 @@ struct rdma::hyv_udata_translate* rdma::udata_translate_create(hyv_udata *udata,
     struct hyv_udata_translate *udata_translate;
     uint32_t i, j;
     int ret;
-
-    debug("udata_translate_create\n");
-
-    debug("udata_gvm_num: %d\n", udata_gvm_num);
 
     chunks = (struct uchunks*) kmalloc(sizeof(*chunks) * udata_gvm_num, GFP_KERNEL);
     if (!chunks) {
@@ -976,16 +937,12 @@ fail:
 struct rdma::hyv_user_mem* rdma::pin_user_mem(unsigned long va, unsigned long size, hyv_user_mem_chunk **chunks, unsigned long *n_chunks, bool write)
 {
     struct hyv_user_mem *umem;
-    unsigned long i, offset, cur_va;
+    unsigned long cur_va;
     unsigned long n_pages, pages_pinned = 0;
     hyv_user_mem_chunk *chunk_tmp = NULL;
     int ret=0;
 
-    offset = va & PAGE_MASK;
     n_pages = PAGE_ALIGN(size) >> PAGE_SHIFT;
-
-    debug("va: 0x%lx, size: %lu\n", va, size);
-    debug("n_pages: %lu, offset: 0x%lx\n", n_pages, offset);
 
     if (n_pages == 0) {
         ret = -EINVAL;
@@ -1028,15 +985,6 @@ struct rdma::hyv_user_mem* rdma::pin_user_mem(unsigned long va, unsigned long si
         if (end_offset) {
             chunk_tmp[n_pages].size -= PAGE_SIZE - end_offset;
         }
-
-        debug("n_chunks: %lu\n", *n_chunks);
-        for (i = 0; i < *n_chunks; i++) {
-            debug("-- chunk[%lu] --\n", i);
-            debug("virt_addr: 0x%lx\n", va+i*PAGE_SIZE);
-            debug("phys_addr: 0x%llx\n", chunk_tmp[i].addr);
-            debug("size: %llu\n", chunk_tmp[i].size);
-        }
-
         *chunks = chunk_tmp;
     }
 
@@ -1069,8 +1017,6 @@ struct ib_mr* rdma::vrdma_reg_mr(u64 user_va, u64 size, u64 io_va, int access, s
     int ret=0;
     int udata_gvm_num = 0;
     struct hyv_udata_gvm *udata_gvm = NULL;
-
-    debug("vrdma_reg_user_mr\n");
 
     BUG_ON(user_va != io_va);
 
@@ -1206,8 +1152,6 @@ struct ib_cq* rdma::vrdma_create_cq(int entries, int vector, struct ib_udata *ib
     uint32_t udata_gvm_num;
     int umem_entries;
 
-    debug("vrdma_create_cq\n");
-
     BUG_ON(!ibuctx);
 
     // roundup_pow_of_two
@@ -1338,7 +1282,6 @@ struct ib_qp* rdma::vrdma_create_qp(struct ib_qp_init_attr *ibinit_attr, struct 
     hyv_udata *udata;
     uint32_t n_chunks_total, i;
 
-    debug("vrdma_create_qp\n");
     BUG_ON(!ibudata);
 
     memcpy(&ucmd, ibudata->inbuf, sizeof(ucmd));
@@ -1477,8 +1420,6 @@ struct ib_qp* rdma::vrdma_create_qp(struct ib_qp_init_attr *ibinit_attr, struct 
     hqp->host_handle = resp->qp_handle;
     hqp->ibqp.qp_num = resp->qpn;
 
-    debug("resp->qpn: %d\n", resp->qpn);
-
     //udata_translate_destroy(udata_translate);
 
     ret = udata_copy_out(udata, ibudata);
@@ -1550,8 +1491,6 @@ int rdma::vrdma_modify_qp(struct ib_qp_attr *ibattr, int cmd_attr_mask, struct i
     hyv_udata *udata;
     int attr_mask;
 
-    debug("vrdma_modify_qp\n");
-
     // set up the new attr mask
     switch (hqp->ibqp.qp_type) {
     case IB_QPT_XRC_INI:
@@ -1561,9 +1500,6 @@ int rdma::vrdma_modify_qp(struct ib_qp_attr *ibattr, int cmd_attr_mask, struct i
     default:
         attr_mask = cmd_attr_mask;
     }
-
-    debug("attr_mask: %d \n", attr_mask);
-    debug("hqp->ibqp.qp_type: %d \n", hqp->ibqp.qp_type);
 
     copy_ib_qp_cap_to_hyv(&ibattr->cap, &attr.cap);
     copy_ib_ah_attr_to_hyv(&ibattr->ah_attr, &attr.ah_attr);

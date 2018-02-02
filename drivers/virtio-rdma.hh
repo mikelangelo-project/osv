@@ -169,7 +169,7 @@ public:
         pthread_cond_t cond;
         struct hcall_async* async;
         int channel_fd;
-        bool hcall_acked;
+        int hcall_acked;
     };
 
 typedef struct ib_uverbs_query_device_resp hyv_query_device_result;
